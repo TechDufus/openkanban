@@ -613,23 +613,26 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 }
 
 // renderWithScrollbackUnlocked renders scrollback + partial live view (must hold mu and vt.Lock)
+// scrollback[0]=oldest, scrollback[len-1]=newest; scrollOffset=N shows content N lines before newest
 func (p *Pane) renderWithScrollbackUnlocked(cols, rows int) string {
 	var lines []string
 
-	// Calculate which scrollback lines to show
-	scrollbackStart := len(p.scrollback) - p.scrollOffset
+	scrollbackEnd := len(p.scrollback) - p.scrollOffset
+	if scrollbackEnd < 0 {
+		scrollbackEnd = 0
+	}
+
+	scrollbackStart := scrollbackEnd - rows
 	if scrollbackStart < 0 {
 		scrollbackStart = 0
 	}
 
-	// Add scrollback lines
-	for i := scrollbackStart; i < len(p.scrollback) && len(lines) < rows; i++ {
+	for i := scrollbackStart; i < scrollbackEnd && len(lines) < rows; i++ {
 		lines = append(lines, p.scrollback[i])
 	}
 
-	// Fill remaining with live screen if needed
-	liveRows := rows - len(lines)
-	if liveRows > 0 {
+	if len(lines) < rows && scrollbackEnd >= len(p.scrollback) {
+		liveRows := rows - len(lines)
 		_, vtRows := p.vt.Size()
 		for row := 0; row < liveRows && row < vtRows; row++ {
 			var line strings.Builder
@@ -644,7 +647,6 @@ func (p *Pane) renderWithScrollbackUnlocked(cols, rows int) string {
 		}
 	}
 
-	// Pad to full height
 	for len(lines) < rows {
 		lines = append(lines, "")
 	}
