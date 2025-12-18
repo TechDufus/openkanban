@@ -172,6 +172,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeNormal {
 			return m.handleMouse(msg)
 		}
+		if m.mode == ModeAgentView {
+			return m.handleAgentViewMouse(msg)
+		}
 		return m, nil
 
 	case terminal.OutputMsg, terminal.RenderTickMsg:
@@ -503,12 +506,6 @@ func (m *Model) handleAgentViewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.String() {
-	case "tab":
-		m.focusedPane = m.nextActivePane()
-		return m, nil
-	}
-
 	if result := pane.HandleKey(msg); result != nil {
 		if _, isExit := result.(terminal.ExitFocusMsg); isExit {
 			m.mode = ModeNormal
@@ -519,27 +516,20 @@ func (m *Model) handleAgentViewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) nextActivePane() board.TicketID {
-	var activePanes []board.TicketID
-	for id, pane := range m.panes {
-		if pane.Running() {
-			activePanes = append(activePanes, id)
-		}
-	}
-	if len(activePanes) == 0 {
-		return ""
+func (m *Model) handleAgentViewMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	pane, ok := m.panes[m.focusedPane]
+	if !ok {
+		return m, nil
 	}
 
-	currentIdx := -1
-	for i, id := range activePanes {
-		if id == m.focusedPane {
-			currentIdx = i
-			break
-		}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		pane.ScrollUp(3)
+	case tea.MouseButtonWheelDown:
+		pane.ScrollDown(3)
 	}
 
-	nextIdx := (currentIdx + 1) % len(activePanes)
-	return activePanes[nextIdx]
+	return m, nil
 }
 
 func (m *Model) handleCreateTicketMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

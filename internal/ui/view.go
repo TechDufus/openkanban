@@ -622,8 +622,7 @@ func (m *Model) renderAgentView() string {
 
 	keyStyle := lipgloss.NewStyle().Foreground(colorTeal)
 	hints := paneIndicator + "  " +
-		keyStyle.Render("Ctrl+g") + dimStyle.Render(" Board") + "  " +
-		keyStyle.Render("Tab") + dimStyle.Render(" Next")
+		keyStyle.Render("Ctrl+g") + dimStyle.Render(" Board")
 
 	spacing := m.width - lipgloss.Width(header) - lipgloss.Width(hints)
 	if spacing < 0 {
