@@ -8,17 +8,11 @@ import (
 
 // Config holds the global application configuration
 type Config struct {
-	// Default settings for new boards
-	Defaults BoardSettings `json:"defaults"`
-
-	// Agent configurations by name
-	Agents map[string]AgentConfig `json:"agents"`
-
-	// UI preferences
-	UI UIConfig `json:"ui"`
-
-	// Custom keybindings
-	Keys map[string]string `json:"keys,omitempty"`
+	Defaults BoardSettings          `json:"defaults"`
+	Agents   map[string]AgentConfig `json:"agents"`
+	UI       UIConfig               `json:"ui"`
+	Cleanup  CleanupSettings        `json:"cleanup"`
+	Keys     map[string]string      `json:"keys,omitempty"`
 }
 
 // BoardSettings contains default settings for boards
@@ -49,6 +43,13 @@ type UIConfig struct {
 	RefreshInterval int    `json:"refresh_interval"`
 	ColumnWidth     int    `json:"column_width"`
 	TicketHeight    int    `json:"ticket_height"`
+}
+
+// CleanupSettings controls cleanup behavior when deleting tickets
+type CleanupSettings struct {
+	DeleteWorktree       bool `json:"delete_worktree"`        // Remove git worktree on ticket delete
+	DeleteBranch         bool `json:"delete_branch"`          // Delete git branch after worktree removal
+	ForceWorktreeRemoval bool `json:"force_worktree_removal"` // Force removal even with uncommitted changes
 }
 
 // DefaultConfig returns the default configuration
@@ -93,6 +94,11 @@ func DefaultConfig() *Config {
 			RefreshInterval: 5,
 			ColumnWidth:     40,
 			TicketHeight:    4,
+		},
+		Cleanup: CleanupSettings{
+			DeleteWorktree:       true,
+			DeleteBranch:         false,
+			ForceWorktreeRemoval: false,
 		},
 	}
 }

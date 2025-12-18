@@ -788,16 +788,57 @@ func (m *Model) confirmDeleteTicket() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.showConfirm = true
-	m.confirmMsg = "Delete ticket: " + ticket.Title + "?"
-	m.confirmFn = func() tea.Cmd {
-		m.board.DeleteTicket(ticket.ID)
-		m.refreshColumnTickets()
-		m.saveBoard()
-		m.notify("Deleted ticket")
-		return nil
+	hasUncommitted := false
+	if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
+		var err error
+		hasUncommitted, err = m.worktreeMgr.HasUncommittedChanges(ticket.WorktreePath)
+		if err != nil {
+			hasUncommitted = false
+		}
+	}
+
+	if hasUncommitted && !m.config.Cleanup.ForceWorktreeRemoval {
+		m.showConfirm = true
+		m.confirmMsg = "Worktree has uncommitted changes. Force delete?"
+		m.confirmFn = func() tea.Cmd {
+			m.performTicketCleanup(ticket, true)
+			return nil
+		}
+	} else {
+		m.showConfirm = true
+		m.confirmMsg = "Delete ticket: " + ticket.Title + "?"
+		m.confirmFn = func() tea.Cmd {
+			m.performTicketCleanup(ticket, false)
+			return nil
+		}
 	}
 	return m, nil
+}
+
+func (m *Model) performTicketCleanup(ticket *board.Ticket, forceWorktree bool) {
+	if pane, ok := m.panes[ticket.ID]; ok {
+		pane.Stop()
+		delete(m.panes, ticket.ID)
+	}
+
+	if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
+		err := m.worktreeMgr.RemoveWorktree(ticket.WorktreePath)
+		if err != nil {
+			m.notify("Worktree removal failed: " + err.Error())
+		}
+	}
+
+	if ticket.BranchName != "" && m.config.Cleanup.DeleteBranch {
+		err := m.worktreeMgr.DeleteBranch(ticket.BranchName)
+		if err != nil {
+			m.notify("Branch deletion failed: " + err.Error())
+		}
+	}
+
+	m.board.DeleteTicket(ticket.ID)
+	m.refreshColumnTickets()
+	m.saveBoard()
+	m.notify("Deleted ticket")
 }
 
 func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {

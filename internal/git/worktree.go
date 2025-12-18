@@ -153,6 +153,19 @@ func (m *WorktreeManager) DeleteBranch(branchName string) error {
 	return nil
 }
 
+// HasUncommittedChanges checks if the worktree has uncommitted changes
+func (m *WorktreeManager) HasUncommittedChanges(worktreePath string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = worktreePath
+
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to check git status: %w", err)
+	}
+
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
 // sanitizeBranchName converts a branch name to a safe directory name
 func sanitizeBranchName(name string) string {
 	// Remove common prefixes
