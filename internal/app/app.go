@@ -34,7 +34,7 @@ func Run(cfg *config.Config, boardPath string) error {
 	model := ui.NewModel(cfg, b, boardDir, agentMgr, worktreeMgr)
 
 	// Run the Bubbletea program
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
 }

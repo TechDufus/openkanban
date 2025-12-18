@@ -120,13 +120,14 @@ func (m *Model) renderBoard() string {
 		col := m.board.Columns[i]
 		isActive := i == m.activeColumn
 		isLast := i == endCol-1
+		isDragTarget := m.dragging && i == m.dragTargetColumn && i != m.dragSourceColumn
 
 		colWidth := baseWidth
 		if i-startCol < remainder {
 			colWidth++
 		}
 
-		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, colWidth, isLast))
+		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, colWidth, isLast))
 	}
 
 	if endCol < len(m.board.Columns) {
@@ -139,7 +140,7 @@ func (m *Model) renderBoard() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 }
 
-func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive bool, width int, isLast bool) string {
+func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget bool, width int, isLast bool) string {
 	headerColor := lipgloss.Color(col.Color)
 
 	icon := "○"
@@ -183,7 +184,10 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 
 	border := columnBorder
 	borderColor := colorSurface
-	if isActive {
+	if isDragTarget {
+		border = columnBorderActive
+		borderColor = colorGreen
+	} else if isActive {
 		border = columnBorderActive
 		borderColor = headerColor
 	}

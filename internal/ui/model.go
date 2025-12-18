@@ -65,6 +65,12 @@ type Model struct {
 	spinner      spinner.Model
 	scrollOffset int
 
+	// Mouse/drag state
+	dragging         bool
+	dragSourceColumn int
+	dragSourceTicket int
+	dragTargetColumn int
+
 	// Cached column tickets
 	columnTickets [][]*board.Ticket
 
@@ -159,6 +165,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if pane, ok := m.panes[m.focusedPane]; ok {
 				pane.SetSize(m.width, m.height-2)
 			}
+		}
+		return m, nil
+
+	case tea.MouseMsg:
+		if m.mode == ModeNormal {
+			return m.handleMouse(msg)
 		}
 		return m, nil
 
@@ -298,6 +310,161 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.settingsIndex = 0
 		m.settingsEditing = false
 	}
+
+	return m, nil
+}
+
+// handleMouse processes mouse events
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button == tea.MouseButtonLeft {
+			col, ticket := m.hitTest(msg.X, msg.Y)
+			if col >= 0 {
+				m.activeColumn = col
+				if ticket >= 0 {
+					m.activeTicket = ticket
+					m.dragging = true
+					m.dragSourceColumn = col
+					m.dragSourceTicket = ticket
+					m.dragTargetColumn = col
+				}
+				m.ensureColumnVisible()
+			}
+		}
+
+	case tea.MouseActionMotion:
+		if m.dragging && msg.Button == tea.MouseButtonLeft {
+			col, _ := m.hitTest(msg.X, msg.Y)
+			if col >= 0 {
+				m.dragTargetColumn = col
+			}
+		}
+
+	case tea.MouseActionRelease:
+		if m.dragging {
+			if m.dragTargetColumn != m.dragSourceColumn && m.dragTargetColumn >= 0 {
+				return m.dropTicket()
+			}
+			m.dragging = false
+			m.dragTargetColumn = 0
+		}
+
+	default:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.moveTicket(-1)
+		case tea.MouseButtonWheelDown:
+			m.moveTicket(1)
+		}
+	}
+
+	return m, nil
+}
+
+// hitTest returns column and ticket indices at screen position, or -1 if not found
+func (m *Model) hitTest(x, y int) (column, ticket int) {
+	if m.width == 0 || len(m.board.Columns) == 0 {
+		return -1, -1
+	}
+
+	headerHeight := 2
+	if y < headerHeight {
+		return -1, -1
+	}
+
+	columnWidth := m.calcColumnWidth()
+	visibleCols := m.visibleColumnCount(columnWidth)
+	numVisible := visibleCols
+	if m.scrollOffset+visibleCols > len(m.board.Columns) {
+		numVisible = len(m.board.Columns) - m.scrollOffset
+	}
+
+	baseWidth, remainder := m.distributeWidth(numVisible)
+
+	hasLeftIndicator := m.scrollOffset > 0
+	startX := 0
+	if hasLeftIndicator {
+		startX = 2
+	}
+
+	for i := 0; i < numVisible; i++ {
+		colWidth := baseWidth + 3
+		if i < remainder {
+			colWidth++
+		}
+
+		if x >= startX && x < startX+colWidth {
+			actualCol := m.scrollOffset + i
+			ticketIdx := m.hitTestTicket(y-headerHeight, actualCol)
+			return actualCol, ticketIdx
+		}
+		startX += colWidth
+	}
+
+	return -1, -1
+}
+
+func (m *Model) hitTestTicket(relativeY, column int) int {
+	if column < 0 || column >= len(m.columnTickets) {
+		return -1
+	}
+
+	tickets := m.columnTickets[column]
+	if len(tickets) == 0 {
+		return -1
+	}
+
+	columnHeaderHeight := 3
+	ticketHeight := 6
+
+	ticketY := relativeY - columnHeaderHeight
+	if ticketY < 0 {
+		return -1
+	}
+
+	ticketIdx := ticketY / ticketHeight
+	if ticketIdx >= len(tickets) {
+		return -1
+	}
+
+	return ticketIdx
+}
+
+func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
+	if len(m.columnTickets) <= m.dragSourceColumn {
+		m.dragging = false
+		return m, nil
+	}
+
+	tickets := m.columnTickets[m.dragSourceColumn]
+	if len(tickets) <= m.dragSourceTicket {
+		m.dragging = false
+		return m, nil
+	}
+
+	ticket := tickets[m.dragSourceTicket]
+	targetStatus := m.board.Columns[m.dragTargetColumn].Status
+
+	if targetStatus == board.StatusInProgress && ticket.WorktreePath == "" {
+		if err := m.setupWorktree(ticket); err != nil {
+			m.notify("Worktree failed: " + err.Error())
+			m.dragging = false
+			return m, nil
+		}
+	}
+
+	m.board.MoveTicket(ticket.ID, targetStatus)
+	m.refreshColumnTickets()
+	m.saveBoard()
+
+	m.activeColumn = m.dragTargetColumn
+	m.activeTicket = 0
+	m.ensureColumnVisible()
+
+	m.notify("Moved to " + string(targetStatus))
+	m.dragging = false
+	m.dragTargetColumn = 0
 
 	return m, nil
 }
