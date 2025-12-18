@@ -45,6 +45,8 @@ const (
 	formFieldTitle       = 0
 	formFieldDescription = 1
 	formFieldBranch      = 2
+
+	defaultScrollback = 10000
 )
 
 // Model is the main Bubbletea model
@@ -515,6 +517,35 @@ func (m *Model) handleAgentViewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !ok {
 		m.mode = ModeNormal
 		m.focusedPane = ""
+		return m, nil
+	}
+
+	pageScrollAmount := m.height - 4
+	if pageScrollAmount < 1 {
+		pageScrollAmount = 10
+	}
+
+	switch msg.Type {
+	case tea.KeyPgUp:
+		pane.ScrollUp(pageScrollAmount)
+		return m, nil
+	case tea.KeyPgDown:
+		pane.ScrollDown(pageScrollAmount)
+		return m, nil
+	case tea.KeyHome:
+		pane.ScrollUp(defaultScrollback)
+		return m, nil
+	case tea.KeyEnd:
+		pane.ScrollToBottom()
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "shift+up":
+		pane.ScrollUp(1)
+		return m, nil
+	case "shift+down":
+		pane.ScrollDown(1)
 		return m, nil
 	}
 

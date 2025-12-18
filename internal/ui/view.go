@@ -485,12 +485,16 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("j/k") + descStyle.Render("   Move between tickets  ") + keyStyle.Render("e") + descStyle.Render("       Edit ticket") + "\n" +
 		"  " + keyStyle.Render("g") + descStyle.Render("     Go to first ticket    ") + keyStyle.Render("d") + descStyle.Render("       Delete ticket") + "\n" +
 		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Quick move") + "\n\n" +
-		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("Other") + "\n" +
+		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("Agent Scroll") + "\n" +
 		"  " + sep + "\n" +
-		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("O") + descStyle.Render("       Board settings") + "\n" +
-		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
-		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n" +
-		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view") + "\n\n" +
+		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("PgUp") + descStyle.Render("    Scroll up page") + "\n" +
+		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("PgDn") + descStyle.Render("    Scroll down page") + "\n" +
+		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("Home") + descStyle.Render("    Scroll to top") + "\n" +
+		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view       ") + keyStyle.Render("End") + descStyle.Render("     Scroll to bottom") + "\n\n" +
+		"  " + keyStyle.Render("Other") + "\n" +
+		"  " + sep + "\n" +
+		"  " + keyStyle.Render("O") + descStyle.Render("     Board settings        ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
+		"  " + keyStyle.Render("q") + descStyle.Render("     Quit") + "\n\n" +
 		"  " + dimStyle.Render("Press any key to close")
 
 	return lipgloss.NewStyle().
@@ -713,6 +717,7 @@ func (m *Model) renderAgentView() string {
 
 	keyStyle := lipgloss.NewStyle().Foreground(colorTeal)
 	hints := paneIndicator + "  " +
+		keyStyle.Render("PgUp/PgDn") + dimStyle.Render(" Scroll  ") +
 		keyStyle.Render("Ctrl+g") + dimStyle.Render(" Board")
 
 	spacing := m.width - lipgloss.Width(header) - lipgloss.Width(hints)
