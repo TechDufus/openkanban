@@ -188,7 +188,6 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 	}
 }
 
-// Stop terminates the running process
 func (p *Pane) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -201,6 +200,18 @@ func (p *Pane) Stop() error {
 	}
 	p.running = false
 	return nil
+}
+
+var ErrPaneNotRunning = fmt.Errorf("pane is not running")
+
+func (p *Pane) WriteInput(data []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.running || p.pty == nil {
+		return 0, ErrPaneNotRunning
+	}
+	return p.pty.Write(data)
 }
 
 // readOutput returns a Cmd that reads from the PTY
