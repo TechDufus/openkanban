@@ -69,9 +69,8 @@ func (m *Model) renderHeader() string {
 			workingCount++
 			continue
 		}
-		sessionName := m.getSessionName(ticket)
-		terminalContent := pane.GetContent()
-		status := m.statusDetector.DetectStatus(sessionName, terminalContent, true)
+		sessionID := m.getSessionName(ticket)
+		status := m.statusDetector.DetectStatus(ticket.AgentType, sessionID, true)
 
 		switch status {
 		case board.AgentWorking:
@@ -278,12 +277,8 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	var effectiveStatus board.AgentStatus
 	if hasPane {
-		terminalContent := ""
-		if pane != nil {
-			terminalContent = pane.GetContent()
-		}
-		sessionName := m.getSessionName(ticket)
-		effectiveStatus = m.statusDetector.DetectStatus(sessionName, terminalContent, isRunning)
+		sessionID := m.getSessionName(ticket)
+		effectiveStatus = m.statusDetector.DetectStatus(ticket.AgentType, sessionID, isRunning)
 
 		if effectiveStatus == board.AgentNone && isRunning {
 			effectiveStatus = board.AgentWorking
