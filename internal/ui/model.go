@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -98,13 +97,14 @@ type Model struct {
 	notifyTime   time.Time
 
 	// Terminal panes for embedded agent sessions
-	panes       map[board.TicketID]*terminal.Pane
-	focusedPane board.TicketID // "" = board view, otherwise pane is focused
+	panes          map[board.TicketID]*terminal.Pane
+	focusedPane    board.TicketID
+	statusDetector *agent.StatusDetector
 
 	// Settings UI state
-	settingsIndex   int             // which setting field is selected
-	settingsEditing bool            // true when editing a field value
-	settingsInput   textinput.Model // input for editing string values
+	settingsIndex   int
+	settingsEditing bool
+	settingsInput   textinput.Model
 }
 
 func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *agent.Manager, worktreeMgr *git.WorktreeManager) *Model {
@@ -134,18 +134,19 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1"))
 
 	m := &Model{
-		config:        cfg,
-		board:         b,
-		boardDir:      boardDir,
-		agentMgr:      agentMgr,
-		worktreeMgr:   worktreeMgr,
-		mode:          ModeNormal,
-		titleInput:    ti,
-		descInput:     di,
-		branchInput:   bi,
-		settingsInput: si,
-		spinner:       sp,
-		panes:         make(map[board.TicketID]*terminal.Pane),
+		config:         cfg,
+		board:          b,
+		boardDir:       boardDir,
+		agentMgr:       agentMgr,
+		worktreeMgr:    worktreeMgr,
+		mode:           ModeNormal,
+		titleInput:     ti,
+		descInput:      di,
+		branchInput:    bi,
+		settingsInput:  si,
+		spinner:        sp,
+		panes:          make(map[board.TicketID]*terminal.Pane),
+		statusDetector: agent.NewStatusDetector(),
 	}
 	m.refreshColumnTickets()
 	return m
@@ -1177,8 +1178,6 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	m.mode = ModeAgentView
 	m.focusedPane = ticket.ID
 
-	m.debugLogSpawn(agentCfg.Command, args, ticket)
-
 	return m, pane.Start(agentCfg.Command, args...)
 }
 
@@ -1231,30 +1230,6 @@ func containsFlag(args []string, flags ...string) bool {
 		}
 	}
 	return false
-}
-
-func (m *Model) debugLogSpawn(command string, args []string, ticket *board.Ticket) {
-	debugPath := filepath.Join(ticket.WorktreePath, ".openkanban-debug.log")
-	f, err := os.Create(debugPath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	fmt.Fprintf(f, "=== OpenKanban Agent Spawn Debug ===\n")
-	fmt.Fprintf(f, "Time: %s\n", time.Now().Format(time.RFC3339))
-	fmt.Fprintf(f, "Ticket ID: %s\n", ticket.ID)
-	fmt.Fprintf(f, "Ticket Title: %s\n", ticket.Title)
-	fmt.Fprintf(f, "Ticket Description:\n%s\n", ticket.Description)
-	fmt.Fprintf(f, "AgentSpawnedAt: %v\n", ticket.AgentSpawnedAt)
-	fmt.Fprintf(f, "\n=== Command ===\n")
-	fmt.Fprintf(f, "Command: %s\n", command)
-	fmt.Fprintf(f, "Args count: %d\n", len(args))
-	for i, arg := range args {
-		fmt.Fprintf(f, "Arg[%d]: %s\n", i, arg)
-	}
-	fmt.Fprintf(f, "\n=== Full Command ===\n")
-	fmt.Fprintf(f, "%s %s\n", command, strings.Join(args, " "))
 }
 
 func (m *Model) stopAgent() (tea.Model, tea.Cmd) {
@@ -1311,6 +1286,13 @@ func (m *Model) nextStatus(current board.TicketStatus) board.TicketStatus {
 func (m *Model) notify(msg string) {
 	m.notification = msg
 	m.notifyTime = time.Now()
+}
+
+func (m *Model) getSessionName(ticket *board.Ticket) string {
+	if ticket.BranchName != "" {
+		return ticket.BranchName
+	}
+	return string(ticket.ID)
 }
 
 func (m *Model) saveBoard() {

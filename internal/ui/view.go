@@ -59,21 +59,58 @@ func (m *Model) renderHeader() string {
 
 	left := lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", boardBadge, "  ", repoPath)
 
-	activeCount := 0
-	for _, pane := range m.panes {
-		if pane.Running() {
-			activeCount++
+	workingCount, waitingCount, idleCount := 0, 0, 0
+	for ticketID, pane := range m.panes {
+		if !pane.Running() {
+			continue
+		}
+		ticket := m.board.Tickets[ticketID]
+		if ticket == nil {
+			workingCount++
+			continue
+		}
+		sessionName := m.getSessionName(ticket)
+		terminalContent := pane.GetContent()
+		status := m.statusDetector.DetectStatus(sessionName, terminalContent, true)
+
+		switch status {
+		case board.AgentWorking:
+			workingCount++
+		case board.AgentWaiting:
+			waitingCount++
+		case board.AgentIdle:
+			idleCount++
+		default:
+			workingCount++
 		}
 	}
 
 	var activity string
-	if activeCount > 0 {
+	totalActive := workingCount + waitingCount + idleCount
+	if totalActive > 0 {
+		var statusText string
+		var bgColor lipgloss.Color
+
+		if waitingCount > 0 {
+			bgColor = colorMauve
+			statusText = fmt.Sprintf("◐ %d waiting", waitingCount)
+			if workingCount > 0 {
+				statusText = fmt.Sprintf("◐ %d waiting, %d working", waitingCount, workingCount)
+			}
+		} else if workingCount > 0 {
+			bgColor = colorYellow
+			statusText = fmt.Sprintf("%s %d working", m.spinner.View(), workingCount)
+		} else {
+			bgColor = colorBlue
+			statusText = fmt.Sprintf("◆ %d idle", idleCount)
+		}
+
 		activityBadge := lipgloss.NewStyle().
 			Foreground(colorBase).
-			Background(colorGreen).
+			Background(bgColor).
 			Bold(true).
 			Padding(0, 1).
-			Render(fmt.Sprintf("%s %d active", m.spinner.View(), activeCount))
+			Render(statusText)
 		activity = activityBadge
 	}
 
@@ -239,19 +276,52 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	pane, hasPane := m.panes[ticket.ID]
 	isRunning := hasPane && pane.Running()
 
+	var effectiveStatus board.AgentStatus
+	if hasPane {
+		terminalContent := ""
+		if pane != nil {
+			terminalContent = pane.GetContent()
+		}
+		sessionName := m.getSessionName(ticket)
+		effectiveStatus = m.statusDetector.DetectStatus(sessionName, terminalContent, isRunning)
+
+		if effectiveStatus == board.AgentNone && isRunning {
+			effectiveStatus = board.AgentWorking
+		} else if effectiveStatus == board.AgentNone {
+			effectiveStatus = board.AgentIdle
+		}
+	} else if ticket.AgentStatus != board.AgentNone {
+		effectiveStatus = ticket.AgentStatus
+	}
+
 	idStr := lipgloss.NewStyle().
 		Foreground(colorMuted).
 		Render(fmt.Sprintf("#%s", string(ticket.ID)[:4]))
 
 	var sessionBadge string
-	if isRunning {
+	switch effectiveStatus {
+	case board.AgentWorking:
+		sessionBadge = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Render(m.spinner.View())
+	case board.AgentWaiting:
+		sessionBadge = lipgloss.NewStyle().
+			Foreground(colorMauve).
+			Render("◐")
+	case board.AgentIdle:
+		if hasPane {
+			sessionBadge = lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Render("◆")
+		}
+	case board.AgentCompleted:
 		sessionBadge = lipgloss.NewStyle().
 			Foreground(colorGreen).
-			Render(m.spinner.View())
-	} else if hasPane {
+			Render("✓")
+	case board.AgentError:
 		sessionBadge = lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Render("◇")
+			Foreground(colorRed).
+			Render("✗")
 	}
 
 	headerLine := idStr
@@ -287,19 +357,6 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 			Padding(0, 1).
 			Render(ticket.AgentType)
 		statusParts = append(statusParts, agentBadge)
-	}
-
-	// Determine actual agent status from pane state, not just ticket.AgentStatus
-	// This ensures we show "working" when a process is actually running
-	var effectiveStatus board.AgentStatus
-	if isRunning {
-		effectiveStatus = board.AgentWorking
-	} else if hasPane {
-		// Pane exists but not running = stopped/idle
-		effectiveStatus = board.AgentIdle
-	} else if ticket.AgentStatus != board.AgentNone {
-		// No pane, use persisted status (e.g., completed, error)
-		effectiveStatus = ticket.AgentStatus
 	}
 
 	if effectiveStatus != board.AgentNone {

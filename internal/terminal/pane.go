@@ -480,6 +480,40 @@ func (p *Pane) ScrollToBottom() {
 	p.cachedView = ""
 }
 
+// GetContent returns the current terminal content as plain text for analysis.
+func (p *Pane) GetContent() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.vt == nil {
+		return ""
+	}
+
+	p.vt.Lock()
+	defer p.vt.Unlock()
+
+	cols, rows := p.vt.Size()
+	if cols <= 0 || rows <= 0 {
+		return ""
+	}
+
+	var result strings.Builder
+	for row := 0; row < rows; row++ {
+		if row > 0 {
+			result.WriteByte('\n')
+		}
+		for col := 0; col < cols; col++ {
+			ch := p.vt.Cell(col, row).Char
+			if ch == 0 {
+				ch = ' '
+			}
+			result.WriteRune(ch)
+		}
+	}
+
+	return result.String()
+}
+
 // --- Rendering (Issue #14) ---
 
 // View returns the rendered terminal content
