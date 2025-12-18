@@ -495,6 +495,7 @@ func (m *Model) renderHelp() string {
 		"  " + sep + "\n" +
 		"  " + keyStyle.Render("O") + descStyle.Render("     Board settings        ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
 		"  " + keyStyle.Render("q") + descStyle.Render("     Quit") + "\n\n" +
+		"  " + dimStyle.Render("Tip: Hold Shift to select text in agent view") + "\n\n" +
 		"  " + dimStyle.Render("Press any key to close")
 
 	return lipgloss.NewStyle().

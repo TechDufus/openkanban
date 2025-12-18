@@ -54,6 +54,10 @@ type Pane struct {
 	scrollback    []string
 	scrollOffset  int
 	maxScrollback int
+
+	// Raw output buffer for reliable scrollback
+	outputBuffer []byte
+	lineBuffer   []byte // accumulates partial lines
 }
 
 // New creates a new terminal pane with the given dimensions
@@ -278,7 +282,6 @@ func (p *Pane) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// handleOutput writes data to vt10x, capturing scrollback
 func (p *Pane) handleOutput(data []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -287,17 +290,28 @@ func (p *Pane) handleOutput(data []byte) {
 		return
 	}
 
-	// Capture top line before write for scrollback
-	prevTopLine := p.getTopLineUnlocked()
-
-	// Write to virtual terminal (parses ANSI sequences)
 	p.vt.Write(data)
 	p.dirty = true
 
-	// Check if content scrolled
-	newTopLine := p.getTopLineUnlocked()
-	if newTopLine != prevTopLine && strings.TrimSpace(prevTopLine) != "" {
-		p.addToScrollbackUnlocked(prevTopLine)
+	p.captureOutputLines(data)
+}
+
+func (p *Pane) captureOutputLines(data []byte) {
+	p.outputBuffer = append(p.outputBuffer, data...)
+
+	for _, b := range data {
+		if b == '\n' {
+			line := string(p.lineBuffer)
+			line = stripANSI(line)
+			if strings.TrimSpace(line) != "" {
+				p.addToScrollbackUnlocked(line)
+			}
+			p.lineBuffer = p.lineBuffer[:0]
+		} else if b == '\r' {
+			continue
+		} else {
+			p.lineBuffer = append(p.lineBuffer, b)
+		}
 	}
 }
 
@@ -399,29 +413,6 @@ func (p *Pane) translateKey(msg tea.KeyMsg) []byte {
 	}
 
 	return nil
-}
-
-// --- Scrollback (Issue #20) ---
-
-// getTopLineUnlocked returns the top line of the terminal (must hold mu)
-func (p *Pane) getTopLineUnlocked() string {
-	if p.vt == nil {
-		return ""
-	}
-
-	p.vt.Lock()
-	defer p.vt.Unlock()
-
-	cols, _ := p.vt.Size()
-	var line strings.Builder
-	for x := 0; x < cols; x++ {
-		ch := p.vt.Cell(x, 0).Char
-		if ch == 0 {
-			ch = ' '
-		}
-		line.WriteRune(ch)
-	}
-	return strings.TrimRight(line.String(), " ")
 }
 
 // addToScrollbackUnlocked adds a line to scrollback with deduplication (must hold mu)
@@ -734,4 +725,24 @@ func buildCleanEnv() []string {
 	}
 	env = append(env, "TERM=xterm-256color")
 	return env
+}
+
+func stripANSI(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	inEscape := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') || s[i] == '~' {
+				inEscape = false
+			}
+			continue
+		}
+		result.WriteByte(s[i])
+	}
+	return result.String()
 }
