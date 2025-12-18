@@ -160,7 +160,7 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 
 		// Build command
 		p.cmd = exec.Command(command, args...)
-		p.cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		p.cmd.Env = buildCleanEnv()
 
 		// Set working directory if specified
 		if p.workdir != "" {
@@ -673,4 +673,20 @@ func colorToANSI(c vt10x.Color, isFG bool) string {
 	g := (c >> 8) & 0xFF
 	b := c & 0xFF
 	return fmt.Sprintf("%d;2;%d;%d;%d", base, r, g, b)
+}
+
+func buildCleanEnv() []string {
+	var env []string
+	for _, e := range os.Environ() {
+		key := strings.Split(e, "=")[0]
+		if key == "OPENCODE" || strings.HasPrefix(key, "OPENCODE_") {
+			continue
+		}
+		if key == "CLAUDE" || strings.HasPrefix(key, "CLAUDE_") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, "TERM=xterm-256color")
+	return env
 }

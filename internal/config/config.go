@@ -28,6 +28,9 @@ type BoardSettings struct {
 	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
 	AutoCreateBranch bool   `json:"auto_create_branch"`
 	BranchPrefix     string `json:"branch_prefix"`
+	BranchNaming     string `json:"branch_naming"`   // "template" | "ai" | "prompt"
+	BranchTemplate   string `json:"branch_template"` // e.g., "{prefix}{slug}"
+	SlugMaxLength    int    `json:"slug_max_length"` // default: 40
 }
 
 // AgentConfig defines how to spawn and monitor an AI agent
@@ -56,7 +59,10 @@ func DefaultConfig() *Config {
 			WorktreeBase:     "",
 			AutoSpawnAgent:   true,
 			AutoCreateBranch: true,
-			BranchPrefix:     "agent/",
+			BranchPrefix:     "task/",
+			BranchNaming:     "template",
+			BranchTemplate:   "{prefix}{slug}",
+			SlugMaxLength:    40,
 		},
 		Agents: map[string]AgentConfig{
 			"claude": {

@@ -1,11 +1,50 @@
 package agent
 
 import (
+	"encoding/json"
+	"os/exec"
+	"sort"
 	"time"
 
 	"github.com/techdufus/openkanban/internal/board"
 	"github.com/techdufus/openkanban/internal/config"
 )
+
+type opencodeSession struct {
+	ID        string `json:"id"`
+	Directory string `json:"directory"`
+	Updated   int64  `json:"updated"`
+}
+
+func FindOpencodeSession(directory string) string {
+	cmd := exec.Command("opencode", "session", "list", "--format", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	var sessions []opencodeSession
+	if err := json.Unmarshal(output, &sessions); err != nil {
+		return ""
+	}
+
+	var matches []opencodeSession
+	for _, s := range sessions {
+		if s.Directory == directory {
+			matches = append(matches, s)
+		}
+	}
+
+	if len(matches) == 0 {
+		return ""
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Updated > matches[j].Updated
+	})
+
+	return matches[0].ID
+}
 
 // Manager handles AI agent configuration and status polling.
 // Agent lifecycle (spawn/stop) is now managed by terminal.Pane via PTY.

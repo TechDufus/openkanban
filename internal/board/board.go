@@ -4,10 +4,44 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
+
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func Slugify(s string, maxLen int) string {
+	if maxLen <= 0 {
+		maxLen = 40
+	}
+
+	slug := strings.ToLower(s)
+
+	slug = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return '-'
+	}, slug)
+
+	slug = nonAlphanumericRegex.ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
+
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+
+	if len(slug) > maxLen {
+		slug = slug[:maxLen]
+		slug = strings.TrimRight(slug, "-")
+	}
+
+	return slug
+}
 
 // TicketID is a unique identifier for a ticket
 type TicketID string
@@ -52,8 +86,9 @@ type Ticket struct {
 	BaseBranch   string `json:"base_branch,omitempty"`
 
 	// Agent integration
-	AgentType   string      `json:"agent_type,omitempty"`
-	AgentStatus AgentStatus `json:"agent_status"`
+	AgentType      string      `json:"agent_type,omitempty"`
+	AgentStatus    AgentStatus `json:"agent_status"`
+	AgentSpawnedAt *time.Time  `json:"agent_spawned_at,omitempty"`
 
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
@@ -99,6 +134,9 @@ type BoardSettings struct {
 	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
 	AutoCreateBranch bool   `json:"auto_create_branch"`
 	BranchPrefix     string `json:"branch_prefix"`
+	BranchNaming     string `json:"branch_naming"`   // "template" | "ai" | "prompt"
+	BranchTemplate   string `json:"branch_template"` // e.g., "{prefix}{slug}"
+	SlugMaxLength    int    `json:"slug_max_length"` // default: 40
 }
 
 // Board represents a kanban board

@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -25,6 +29,7 @@ const (
 	ModeHelp         Mode = "HELP"
 	ModeConfirm      Mode = "CONFIRM"
 	ModeCreateTicket Mode = "CREATE"
+	ModeEditTicket   Mode = "EDIT"
 	ModeAgentView    Mode = "AGENT"
 	ModeSettings     Mode = "SETTINGS"
 )
@@ -32,6 +37,10 @@ const (
 const (
 	minColumnWidth = 20
 	columnOverhead = 5 // border (2) + padding (2) + margin (1)
+
+	formFieldTitle       = 0
+	formFieldDescription = 1
+	formFieldBranch      = 2
 )
 
 // Model is the main Bubbletea model
@@ -65,8 +74,12 @@ type Model struct {
 	confirmMsg  string
 	confirmFn   func() tea.Cmd
 
-	// Create ticket form
-	titleInput textinput.Model
+	titleInput      textinput.Model
+	descInput       textarea.Model
+	branchInput     textinput.Model
+	ticketFormField int
+	editingTicketID board.TicketID
+	branchLocked    bool
 
 	// Error/notification
 	notification string
@@ -88,6 +101,18 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 	ti.CharLimit = 100
 	ti.Width = 40
 
+	di := textarea.New()
+	di.Placeholder = "Optional description..."
+	di.CharLimit = 500
+	di.SetWidth(40)
+	di.SetHeight(4)
+	di.ShowLineNumbers = false
+
+	bi := textinput.New()
+	bi.Placeholder = "Auto-generated from title..."
+	bi.CharLimit = 100
+	bi.Width = 40
+
 	si := textinput.New()
 	si.CharLimit = 200
 	si.Width = 40
@@ -104,6 +129,8 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 		worktreeMgr:   worktreeMgr,
 		mode:          ModeNormal,
 		titleInput:    ti,
+		descInput:     di,
+		branchInput:   bi,
 		settingsInput: si,
 		spinner:       sp,
 		panes:         make(map[board.TicketID]*terminal.Pane),
@@ -213,6 +240,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommandMode(msg)
 	case ModeCreateTicket:
 		return m.handleCreateTicketMode(msg)
+	case ModeEditTicket:
+		return m.handleEditTicketMode(msg)
 	case ModeAgentView:
 		return m.handleAgentViewMode(msg)
 	case ModeSettings:
@@ -244,9 +273,10 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	// Actions
 	case "n":
 		return m.createNewTicket()
+	case "e":
+		return m.editTicket()
 	case "enter":
 		return m.attachToAgent()
 	case "d":
@@ -346,31 +376,135 @@ func (m *Model) nextActivePane() board.TicketID {
 }
 
 func (m *Model) handleCreateTicketMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	return m.handleTicketForm(msg, false)
+}
+
+func (m *Model) handleEditTicketMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	return m.handleTicketForm(msg, true)
+}
+
+func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "tab":
+		return m.nextFormField(), nil
+	case "shift+tab":
+		return m.prevFormField(), nil
+
+	case "ctrl+s", "ctrl+enter":
+		return m.saveTicketForm(isEdit)
+
 	case "enter":
-		title := strings.TrimSpace(m.titleInput.Value())
-		if title == "" {
-			m.notify("Title cannot be empty")
-			return m, nil
+		if m.ticketFormField == formFieldTitle {
+			return m.saveTicketForm(isEdit)
 		}
-		ticket := board.NewTicket(title)
-		ticket.Status = m.board.Columns[m.activeColumn].Status
-		m.board.AddTicket(ticket)
-		m.refreshColumnTickets()
-		m.saveBoard()
-		m.mode = ModeNormal
-		m.titleInput.Blur()
-		m.notify("Created: " + title)
-		return m, nil
+
 	case "esc":
 		m.mode = ModeNormal
-		m.titleInput.Blur()
+		m.blurAllFormFields()
+		m.editingTicketID = ""
+		m.branchLocked = false
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.titleInput, cmd = m.titleInput.Update(msg)
+	switch m.ticketFormField {
+	case formFieldTitle:
+		m.titleInput, cmd = m.titleInput.Update(msg)
+	case formFieldDescription:
+		m.descInput, cmd = m.descInput.Update(msg)
+	case formFieldBranch:
+		if !m.branchLocked {
+			m.branchInput, cmd = m.branchInput.Update(msg)
+		}
+	}
 	return m, cmd
+}
+
+func (m *Model) nextFormField() *Model {
+	m.blurAllFormFields()
+	m.ticketFormField++
+	if m.ticketFormField > formFieldBranch {
+		m.ticketFormField = formFieldTitle
+	}
+	if m.ticketFormField == formFieldBranch && m.branchLocked {
+		m.ticketFormField = formFieldTitle
+	}
+	m.focusCurrentField()
+	return m
+}
+
+func (m *Model) prevFormField() *Model {
+	m.blurAllFormFields()
+	m.ticketFormField--
+	if m.ticketFormField < formFieldTitle {
+		m.ticketFormField = formFieldBranch
+	}
+	if m.ticketFormField == formFieldBranch && m.branchLocked {
+		m.ticketFormField = formFieldDescription
+	}
+	m.focusCurrentField()
+	return m
+}
+
+func (m *Model) blurAllFormFields() {
+	m.titleInput.Blur()
+	m.descInput.Blur()
+	m.branchInput.Blur()
+}
+
+func (m *Model) focusCurrentField() {
+	switch m.ticketFormField {
+	case formFieldTitle:
+		m.titleInput.Focus()
+	case formFieldDescription:
+		m.descInput.Focus()
+	case formFieldBranch:
+		m.branchInput.Focus()
+	}
+}
+
+func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
+	title := strings.TrimSpace(m.titleInput.Value())
+	if title == "" {
+		m.notify("Title cannot be empty")
+		return m, nil
+	}
+
+	desc := strings.TrimSpace(m.descInput.Value())
+	branchName := strings.TrimSpace(m.branchInput.Value())
+	if branchName == "" {
+		branchName = m.generateBranchNameFromTitle(title)
+	}
+
+	if isEdit && m.editingTicketID != "" {
+		ticket := m.board.Tickets[m.editingTicketID]
+		if ticket != nil {
+			ticket.Title = title
+			ticket.Description = desc
+			if !m.branchLocked {
+				ticket.BranchName = branchName
+			}
+			ticket.UpdatedAt = time.Now()
+			m.saveBoard()
+			m.refreshColumnTickets()
+			m.notify("Updated: " + title)
+		}
+	} else {
+		ticket := board.NewTicket(title)
+		ticket.Description = desc
+		ticket.BranchName = branchName
+		ticket.Status = m.board.Columns[m.activeColumn].Status
+		m.board.AddTicket(ticket)
+		m.refreshColumnTickets()
+		m.saveBoard()
+		m.notify("Created: " + title)
+	}
+
+	m.mode = ModeNormal
+	m.blurAllFormFields()
+	m.editingTicketID = ""
+	m.branchLocked = false
+	return m, nil
 }
 
 type settingsField struct {
@@ -385,6 +519,9 @@ var settingsFields = []settingsField{
 	{"auto_spawn_agent", "Auto Spawn Agent", "bool"},
 	{"auto_create_branch", "Auto Create Branch", "bool"},
 	{"branch_prefix", "Branch Prefix", "string"},
+	{"branch_naming", "Branch Naming", "string"},
+	{"branch_template", "Branch Template", "string"},
+	{"slug_max_length", "Slug Max Length", "int"},
 }
 
 func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -464,6 +601,12 @@ func (m *Model) getSettingsValue(key string) string {
 		return s.WorktreeBase
 	case "branch_prefix":
 		return s.BranchPrefix
+	case "branch_naming":
+		return s.BranchNaming
+	case "branch_template":
+		return s.BranchTemplate
+	case "slug_max_length":
+		return fmt.Sprintf("%d", s.SlugMaxLength)
 	}
 	return ""
 }
@@ -477,6 +620,14 @@ func (m *Model) applySettingsValue(key, value string) {
 		s.WorktreeBase = value
 	case "branch_prefix":
 		s.BranchPrefix = value
+	case "branch_naming":
+		s.BranchNaming = value
+	case "branch_template":
+		s.BranchTemplate = value
+	case "slug_max_length":
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			s.SlugMaxLength = n
+		}
 	}
 }
 
@@ -575,10 +726,38 @@ func (m *Model) moveTicket(delta int) {
 	}
 }
 
-// Action implementations
 func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.mode = ModeCreateTicket
+	m.ticketFormField = formFieldTitle
+	m.editingTicketID = ""
+	m.branchLocked = false
 	m.titleInput.Reset()
+	m.descInput.Reset()
+	m.branchInput.Reset()
+	m.blurAllFormFields()
+	m.titleInput.Focus()
+	return m, m.titleInput.Cursor.BlinkCmd()
+}
+
+func (m *Model) editTicket() (tea.Model, tea.Cmd) {
+	ticket := m.selectedTicket()
+	if ticket == nil {
+		m.notify("No ticket selected")
+		return m, nil
+	}
+
+	m.mode = ModeEditTicket
+	m.ticketFormField = formFieldTitle
+	m.editingTicketID = ticket.ID
+	m.branchLocked = ticket.WorktreePath != ""
+	m.titleInput.SetValue(ticket.Title)
+	m.descInput.SetValue(ticket.Description)
+	if ticket.BranchName != "" {
+		m.branchInput.SetValue(ticket.BranchName)
+	} else {
+		m.branchInput.SetValue(m.generateBranchNameFromTitle(ticket.Title))
+	}
+	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
 }
@@ -627,10 +806,16 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Move to next column
 	nextStatus := m.nextStatus(ticket.Status)
 	if nextStatus == ticket.Status {
 		return m, nil
+	}
+
+	if nextStatus == board.StatusInProgress && ticket.WorktreePath == "" {
+		if err := m.setupWorktree(ticket); err != nil {
+			m.notify("Worktree failed: " + err.Error())
+			return m, nil
+		}
 	}
 
 	m.board.MoveTicket(ticket.ID, nextStatus)
@@ -639,6 +824,54 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 	m.notify("Moved to " + string(nextStatus))
 
 	return m, nil
+}
+
+func (m *Model) setupWorktree(ticket *board.Ticket) error {
+	branchName := m.generateBranchName(ticket)
+	baseBranch, _ := m.worktreeMgr.GetDefaultBranch()
+
+	path, err := m.worktreeMgr.CreateWorktree(branchName, baseBranch)
+	if err != nil {
+		return err
+	}
+
+	ticket.WorktreePath = path
+	ticket.BranchName = branchName
+	ticket.BaseBranch = baseBranch
+	return nil
+}
+
+func (m *Model) generateBranchNameFromTitle(title string) string {
+	settings := &m.board.Settings
+
+	maxLen := settings.SlugMaxLength
+	if maxLen <= 0 {
+		maxLen = 40
+	}
+
+	slug := board.Slugify(title, maxLen)
+
+	template := settings.BranchTemplate
+	if template == "" {
+		template = "{prefix}{slug}"
+	}
+
+	prefix := settings.BranchPrefix
+	if prefix == "" {
+		prefix = "task/"
+	}
+
+	result := strings.ReplaceAll(template, "{prefix}", prefix)
+	result = strings.ReplaceAll(result, "{slug}", slug)
+
+	return result
+}
+
+func (m *Model) generateBranchName(ticket *board.Ticket) string {
+	if ticket.BranchName != "" {
+		return ticket.BranchName
+	}
+	return m.generateBranchNameFromTitle(ticket.Title)
 }
 
 func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
@@ -658,18 +891,10 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	}
 
 	if ticket.WorktreePath == "" {
-		branch := m.board.Settings.BranchPrefix + string(ticket.ID)[:8]
-		baseBranch, _ := m.worktreeMgr.GetDefaultBranch()
-
-		path, err := m.worktreeMgr.CreateWorktree(branch, baseBranch)
-		if err != nil {
+		if err := m.setupWorktree(ticket); err != nil {
 			m.notify("Failed to create worktree: " + err.Error())
 			return m, nil
 		}
-
-		ticket.WorktreePath = path
-		ticket.BranchName = branch
-		ticket.BaseBranch = baseBranch
 	}
 
 	agentType := m.board.Settings.DefaultAgent
@@ -686,13 +911,65 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	ticket.AgentType = agentType
 	ticket.AgentStatus = board.AgentIdle
 
+	isResume := ticket.AgentSpawnedAt != nil
+	args := m.buildAgentArgs(agentCfg, ticket)
+
+	if !isResume {
+		now := time.Now()
+		ticket.AgentSpawnedAt = &now
+	}
+
 	m.saveBoard()
-	m.notify("Starting " + agentType)
+
+	if isResume {
+		m.notify("Resuming " + agentType)
+	} else {
+		m.notify("Starting " + agentType)
+	}
 
 	m.mode = ModeAgentView
 	m.focusedPane = ticket.ID
 
-	return m, pane.Start(agentCfg.Command, agentCfg.Args...)
+	return m, pane.Start(agentCfg.Command, args...)
+}
+
+func (m *Model) buildAgentArgs(cfg config.AgentConfig, ticket *board.Ticket) []string {
+	args := make([]string, len(cfg.Args))
+	copy(args, cfg.Args)
+
+	agentType := cfg.Command
+	if strings.Contains(agentType, "/") {
+		agentType = filepath.Base(agentType)
+	}
+
+	hasSession := ticket.AgentSpawnedAt != nil
+
+	switch agentType {
+	case "claude":
+		if hasSession && !containsFlag(args, "--continue", "-c") {
+			args = append(args, "--continue")
+		}
+	case "opencode":
+		args = append([]string{ticket.WorktreePath}, args...)
+		if hasSession {
+			if sessionID := agent.FindOpencodeSession(ticket.WorktreePath); sessionID != "" {
+				args = append(args, "--session", sessionID)
+			}
+		}
+	}
+
+	return args
+}
+
+func containsFlag(args []string, flags ...string) bool {
+	for _, arg := range args {
+		for _, flag := range flags {
+			if arg == flag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *Model) stopAgent() (tea.Model, tea.Cmd) {

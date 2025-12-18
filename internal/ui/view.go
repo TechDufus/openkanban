@@ -30,8 +30,8 @@ func (m *Model) View() string {
 	if m.showConfirm {
 		return m.renderWithOverlay(b.String(), m.renderConfirmDialog())
 	}
-	if m.mode == ModeCreateTicket {
-		return m.renderWithOverlay(b.String(), m.renderCreateTicketForm())
+	if m.mode == ModeCreateTicket || m.mode == ModeEditTicket {
+		return m.renderWithOverlay(b.String(), m.renderTicketForm())
 	}
 	if m.mode == ModeSettings {
 		return m.renderWithOverlay(b.String(), m.renderSettingsView())
@@ -235,6 +235,20 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 		Width(width)
 	wrappedTitle := titleStyle.Render(ticket.Title)
 
+	var descLine string
+	if ticket.Description != "" {
+		desc := ticket.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		desc = strings.ReplaceAll(desc, "\n", " ")
+		descLine = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Italic(true).
+			Width(width).
+			Render(desc)
+	}
+
 	var statusParts []string
 	if ticket.AgentType != "" {
 		agentBadge := lipgloss.NewStyle().
@@ -288,6 +302,9 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	labelsLine := strings.Join(labelParts, " ")
 
 	lines := []string{headerLine, wrappedTitle}
+	if descLine != "" {
+		lines = append(lines, descLine)
+	}
 	if statusLine != "" {
 		lines = append(lines, statusLine)
 	}
@@ -326,6 +343,7 @@ func (m *Model) renderStatusBar() string {
 	hintStyle := lipgloss.NewStyle().Foreground(colorSubtext)
 	hints := hintStyle.Render("h/l") + dimStyle.Render(": move") + sep +
 		hintStyle.Render("n") + dimStyle.Render(": new") + sep +
+		hintStyle.Render("e") + dimStyle.Render(": edit") + sep +
 		hintStyle.Render("s") + dimStyle.Render(": spawn") + sep +
 		hintStyle.Render("O") + dimStyle.Render(": settings")
 
@@ -369,14 +387,15 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("Navigation") + "                    " + keyStyle.Render("Actions") + "\n" +
 		"  " + sep + "\n" +
 		"  " + keyStyle.Render("h/l") + descStyle.Render("   Move between columns  ") + keyStyle.Render("n") + descStyle.Render("       New ticket") + "\n" +
-		"  " + keyStyle.Render("j/k") + descStyle.Render("   Move between tickets  ") + keyStyle.Render("Enter") + descStyle.Render("   Attach to agent") + "\n" +
+		"  " + keyStyle.Render("j/k") + descStyle.Render("   Move between tickets  ") + keyStyle.Render("e") + descStyle.Render("       Edit ticket") + "\n" +
 		"  " + keyStyle.Render("g") + descStyle.Render("     Go to first ticket    ") + keyStyle.Render("d") + descStyle.Render("       Delete ticket") + "\n" +
 		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Quick move") + "\n\n" +
 		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("Other") + "\n" +
 		"  " + sep + "\n" +
 		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("O") + descStyle.Render("       Board settings") + "\n" +
 		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
-		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view      ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n\n" +
+		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n" +
+		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view") + "\n\n" +
 		"  " + dimStyle.Render("Press any key to close")
 
 	return lipgloss.NewStyle().
@@ -404,14 +423,53 @@ func (m *Model) renderConfirmDialog() string {
 		Render(content)
 }
 
-func (m *Model) renderCreateTicketForm() string {
+func (m *Model) renderTicketForm() string {
+	isEdit := m.mode == ModeEditTicket
+	formTitle := "New Ticket"
+	actionText := "Create"
+	if isEdit {
+		formTitle = "Edit Ticket"
+		actionText = "Save"
+	}
+
 	titleStyle := lipgloss.NewStyle().
 		Foreground(colorGreen).
 		Bold(true)
 
-	content := titleStyle.Render("◈ New Ticket") + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorSubtext).Render("Title: ") + m.titleInput.View() + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorGreen).Render("[Enter]") + dimStyle.Render(" Create    ") +
+	labelStyle := lipgloss.NewStyle().Foreground(colorSubtext)
+	activeLabelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+	lockedStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+
+	titleLabel := labelStyle
+	descLabel := labelStyle
+	branchLabel := labelStyle
+
+	switch m.ticketFormField {
+	case formFieldTitle:
+		titleLabel = activeLabelStyle
+	case formFieldDescription:
+		descLabel = activeLabelStyle
+	case formFieldBranch:
+		branchLabel = activeLabelStyle
+	}
+
+	var branchField string
+	if m.branchLocked {
+		branchLabel = lockedStyle
+		branchField = lockedStyle.Render(m.branchInput.Value() + " (locked)")
+	} else {
+		branchField = m.branchInput.View()
+	}
+
+	content := titleStyle.Render("◈ "+formTitle) + "\n\n" +
+		"  " + titleLabel.Render("Title:") + "\n" +
+		"  " + m.titleInput.View() + "\n\n" +
+		"  " + descLabel.Render("Description:") + "\n" +
+		"  " + m.descInput.View() + "\n\n" +
+		"  " + branchLabel.Render("Branch:") + "\n" +
+		"  " + branchField + "\n\n" +
+		"  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Switch    ") +
+		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"    ") +
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
 
 	return lipgloss.NewStyle().
@@ -468,6 +526,12 @@ func (m *Model) renderSettingsView() string {
 			}
 		case "branch_prefix":
 			value = s.BranchPrefix
+		case "branch_naming":
+			value = s.BranchNaming
+		case "branch_template":
+			value = s.BranchTemplate
+		case "slug_max_length":
+			value = fmt.Sprintf("%d", s.SlugMaxLength)
 		}
 
 		cursor := "  "
