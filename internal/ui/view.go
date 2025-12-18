@@ -211,17 +211,13 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	var sessionBadge string
 	if isRunning {
-		liveBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorGreen).
-			Bold(true).
-			Padding(0, 1).
-			Render(m.spinner.View() + " LIVE")
-		sessionBadge = liveBadge
+		sessionBadge = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Render(m.spinner.View())
 	} else if hasPane {
 		sessionBadge = lipgloss.NewStyle().
 			Foreground(colorMuted).
-			Render("◇ stopped")
+			Render("◇")
 	}
 
 	headerLine := idStr
@@ -259,10 +255,23 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 		statusParts = append(statusParts, agentBadge)
 	}
 
-	if ticket.AgentStatus != board.AgentNone {
+	// Determine actual agent status from pane state, not just ticket.AgentStatus
+	// This ensures we show "working" when a process is actually running
+	var effectiveStatus board.AgentStatus
+	if isRunning {
+		effectiveStatus = board.AgentWorking
+	} else if hasPane {
+		// Pane exists but not running = stopped/idle
+		effectiveStatus = board.AgentIdle
+	} else if ticket.AgentStatus != board.AgentNone {
+		// No pane, use persisted status (e.g., completed, error)
+		effectiveStatus = ticket.AgentStatus
+	}
+
+	if effectiveStatus != board.AgentNone {
 		var statusIcon, statusText string
 		var statusColor lipgloss.Color
-		switch ticket.AgentStatus {
+		switch effectiveStatus {
 		case board.AgentIdle:
 			statusIcon = "◆"
 			statusText = "idle"
@@ -317,12 +326,13 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	border := ticketBorder
 	borderColor := colorSurface
 
-	if isRunning {
-		border = ticketBorderLive
-		borderColor = colorGreen
-	} else if isSelected {
+	if isSelected {
 		border = ticketBorderSelected
 		borderColor = lipgloss.Color(columnColor)
+	}
+
+	if isRunning {
+		borderColor = colorGreen
 	}
 
 	cardStyle := lipgloss.NewStyle().
@@ -699,17 +709,6 @@ var (
 		TopRight:    "╗",
 		BottomLeft:  "╚",
 		BottomRight: "╝",
-	}
-
-	ticketBorderLive = lipgloss.Border{
-		Top:         "▀",
-		Bottom:      "▄",
-		Left:        "▌",
-		Right:       "▐",
-		TopLeft:     "▛",
-		TopRight:    "▜",
-		BottomLeft:  "▙",
-		BottomRight: "▟",
 	}
 )
 
