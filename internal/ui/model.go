@@ -37,7 +37,11 @@ const (
 
 const (
 	minColumnWidth = 20
-	columnOverhead = 5 // border (2) + padding (2) + margin (1)
+	columnOverhead = 5
+
+	ticketHeight          = 6
+	columnHeaderHeight    = 3
+	scrollIndicatorHeight = 1
 
 	formFieldTitle       = 0
 	formFieldDescription = 1
@@ -58,13 +62,14 @@ type Model struct {
 	worktreeMgr *git.WorktreeManager
 
 	// UI state
-	mode         Mode
-	activeColumn int
-	activeTicket int
-	width        int
-	height       int
-	spinner      spinner.Model
-	scrollOffset int
+	mode          Mode
+	activeColumn  int
+	activeTicket  int
+	width         int
+	height        int
+	spinner       spinner.Model
+	scrollOffset  int   // horizontal scroll for columns
+	columnOffsets []int // vertical scroll offset per column
 
 	// Mouse/drag state
 	dragging         bool
@@ -281,6 +286,7 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveTicket(-1)
 	case "g":
 		m.activeTicket = 0
+		m.ensureTicketVisible()
 	case "G":
 		if len(m.columnTickets) > m.activeColumn {
 			m.activeTicket = len(m.columnTickets[m.activeColumn]) - 1
@@ -288,6 +294,7 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.activeTicket = 0
 			}
 		}
+		m.ensureTicketVisible()
 
 	case "n":
 		return m.createNewTicket()
@@ -419,15 +426,17 @@ func (m *Model) hitTestTicket(relativeY, column int) int {
 		return -1
 	}
 
-	columnHeaderHeight := 3
-	ticketHeight := 6
-
 	ticketY := relativeY - columnHeaderHeight
 	if ticketY < 0 {
 		return -1
 	}
 
-	ticketIdx := ticketY / ticketHeight
+	offset := 0
+	if column < len(m.columnOffsets) {
+		offset = m.columnOffsets[column]
+	}
+
+	ticketIdx := offset + (ticketY / ticketHeight)
 	if ticketIdx >= len(tickets) {
 		return -1
 	}
@@ -465,6 +474,7 @@ func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
 	m.activeColumn = m.dragTargetColumn
 	m.activeTicket = 0
 	m.ensureColumnVisible()
+	m.ensureTicketVisible()
 
 	m.notify("Moved to " + string(targetStatus))
 	m.dragging = false
@@ -789,7 +799,6 @@ func (m *Model) applySettingsValue(key, value string) {
 	}
 }
 
-// Navigation helpers
 func (m *Model) moveColumn(delta int) {
 	m.activeColumn += delta
 	if m.activeColumn < 0 {
@@ -800,6 +809,7 @@ func (m *Model) moveColumn(delta int) {
 	}
 	m.activeTicket = 0
 	m.ensureColumnVisible()
+	m.ensureTicketVisible()
 }
 
 func (m *Model) ensureColumnVisible() {
@@ -881,6 +891,44 @@ func (m *Model) moveTicket(delta int) {
 		if m.activeTicket < 0 {
 			m.activeTicket = 0
 		}
+	}
+	m.ensureTicketVisible()
+}
+
+func (m *Model) visibleTicketCount() int {
+	availableHeight := m.columnContentHeight()
+	if availableHeight <= 0 {
+		return 1
+	}
+	count := availableHeight / ticketHeight
+	if count < 1 {
+		count = 1
+	}
+	return count
+}
+
+func (m *Model) columnContentHeight() int {
+	boardHeight := m.height - 4
+	contentHeight := boardHeight - columnHeaderHeight - 4
+	return contentHeight
+}
+
+func (m *Model) ensureTicketVisible() {
+	if m.activeColumn < 0 || m.activeColumn >= len(m.columnOffsets) {
+		return
+	}
+
+	offset := m.columnOffsets[m.activeColumn]
+	visible := m.visibleTicketCount()
+
+	if m.activeTicket < offset {
+		m.columnOffsets[m.activeColumn] = m.activeTicket
+	} else if m.activeTicket >= offset+visible {
+		m.columnOffsets[m.activeColumn] = m.activeTicket - visible + 1
+	}
+
+	if m.columnOffsets[m.activeColumn] < 0 {
+		m.columnOffsets[m.activeColumn] = 0
 	}
 }
 
@@ -1242,6 +1290,10 @@ func (m *Model) refreshColumnTickets() {
 	m.columnTickets = make([][]*board.Ticket, len(m.board.Columns))
 	for i, col := range m.board.Columns {
 		m.columnTickets[i] = m.board.GetTicketsByStatus(col.Status)
+	}
+
+	if len(m.columnOffsets) != len(m.board.Columns) {
+		m.columnOffsets = make([]int, len(m.board.Columns))
 	}
 }
 

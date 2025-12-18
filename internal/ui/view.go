@@ -127,7 +127,12 @@ func (m *Model) renderBoard() string {
 			colWidth++
 		}
 
-		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, colWidth, isLast))
+		ticketOffset := 0
+		if i < len(m.columnOffsets) {
+			ticketOffset = m.columnOffsets[i]
+		}
+
+		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, colWidth, isLast, ticketOffset))
 	}
 
 	if endCol < len(m.board.Columns) {
@@ -140,7 +145,7 @@ func (m *Model) renderBoard() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 }
 
-func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget bool, width int, isLast bool) string {
+func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget bool, width int, isLast bool, ticketOffset int) string {
 	headerColor := lipgloss.Color(col.Color)
 
 	icon := "○"
@@ -165,10 +170,35 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 
 	headerLine := header + count
 
+	visibleCount := m.visibleTicketCount()
+	endIdx := ticketOffset + visibleCount
+	if endIdx > len(tickets) {
+		endIdx = len(tickets)
+	}
+
+	hasMoreAbove := ticketOffset > 0
+	hasMoreBelow := endIdx < len(tickets)
+
+	indicatorStyle := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Width(width - 4).
+		Align(lipgloss.Center)
+
 	var ticketViews []string
-	for i, ticket := range tickets {
+
+	if hasMoreAbove {
+		ticketViews = append(ticketViews, indicatorStyle.Render(fmt.Sprintf("▲ %d more", ticketOffset)))
+	}
+
+	for i := ticketOffset; i < endIdx; i++ {
+		ticket := tickets[i]
 		isSelected := isActive && i == m.activeTicket
 		ticketViews = append(ticketViews, m.renderTicket(ticket, isSelected, width-4, col.Color))
+	}
+
+	if hasMoreBelow {
+		remaining := len(tickets) - endIdx
+		ticketViews = append(ticketViews, indicatorStyle.Render(fmt.Sprintf("▼ %d more", remaining)))
 	}
 
 	ticketsView := strings.Join(ticketViews, "\n")
