@@ -6,6 +6,80 @@ import (
 	"path/filepath"
 )
 
+const defaultGlobalPrompt = `You have been spawned by OpenKanban to work on a ticket.
+
+**Title:** {{.Title}}
+
+**Description:**
+{{.Description}}
+
+**Branch:** {{.BranchName}} (from {{.BaseBranch}})
+
+Focus on completing this ticket. Ask clarifying questions if the description is unclear.`
+
+const defaultOpencodePrompt = `You have been spawned by OpenKanban, a kanban board system for managing development tasks.
+
+## Your Assignment
+
+You are now working on a specific ticket. This ticket represents a discrete unit of work that needs to be completed.
+
+**Ticket Title:** {{.Title}}
+
+**Ticket Description:**
+{{.Description}}
+
+## Technical Context
+
+- **Git Branch:** {{.BranchName}}
+- **Base Branch:** {{.BaseBranch}}
+- **Working Directory:** This session is scoped to an isolated git worktree for this ticket
+
+## Expectations
+
+1. Focus exclusively on completing the work described in this ticket
+2. The ticket description above is your primary specification - implement what it describes
+3. If the description is unclear or incomplete, ask clarifying questions before proceeding
+4. Make commits as appropriate for the work being done
+5. When the work is complete, summarize what was accomplished
+
+Begin by analyzing the ticket requirements and proposing your approach.`
+
+const defaultClaudePrompt = `You have been spawned by OpenKanban, a kanban board system for managing development tasks.
+
+## Your Assignment
+
+You are now working on a specific ticket. This ticket represents a discrete unit of work that needs to be completed.
+
+**Ticket Title:** {{.Title}}
+
+**Ticket Description:**
+{{.Description}}
+
+## Technical Context
+
+- **Git Branch:** {{.BranchName}}
+- **Base Branch:** {{.BaseBranch}}
+- **Working Directory:** This session is scoped to an isolated git worktree for this ticket
+
+## Expectations
+
+1. Focus exclusively on completing the work described in this ticket
+2. The ticket description above is your primary specification - implement what it describes
+3. If the description is unclear or incomplete, ask clarifying questions before proceeding
+4. Make commits as appropriate for the work being done
+5. When the work is complete, summarize what was accomplished
+
+Begin by analyzing the ticket requirements and proposing your approach.`
+
+const defaultAiderPrompt = `OpenKanban Ticket: {{.Title}}
+
+Description:
+{{.Description}}
+
+Branch: {{.BranchName}} (from {{.BaseBranch}})
+
+This is your assigned task. Implement what the description specifies.`
+
 // Config holds the global application configuration
 type Config struct {
 	Defaults BoardSettings          `json:"defaults"`
@@ -25,6 +99,7 @@ type BoardSettings struct {
 	BranchNaming     string `json:"branch_naming"`   // "template" | "ai" | "prompt"
 	BranchTemplate   string `json:"branch_template"` // e.g., "{prefix}{slug}"
 	SlugMaxLength    int    `json:"slug_max_length"` // default: 40
+	InitPrompt       string `json:"init_prompt"`
 }
 
 // AgentConfig defines how to spawn and monitor an AI agent
@@ -64,6 +139,7 @@ func DefaultConfig() *Config {
 			BranchNaming:     "template",
 			BranchTemplate:   "{prefix}{slug}",
 			SlugMaxLength:    40,
+			InitPrompt:       defaultGlobalPrompt,
 		},
 		Agents: map[string]AgentConfig{
 			"claude": {
@@ -71,21 +147,21 @@ func DefaultConfig() *Config {
 				Args:       []string{"--dangerously-skip-permissions"},
 				Env:        map[string]string{},
 				StatusFile: ".claude/status.json",
-				InitPrompt: "You are working on: {{.Title}}\n\nDescription:\n{{.Description}}\n\nBranch: {{.BranchName}}\nBase: {{.BaseBranch}}",
+				InitPrompt: defaultClaudePrompt,
 			},
 			"opencode": {
 				Command:    "opencode",
 				Args:       []string{},
 				Env:        map[string]string{},
 				StatusFile: ".opencode/status.json",
-				InitPrompt: "Task: {{.Title}}\n\n{{.Description}}",
+				InitPrompt: defaultOpencodePrompt,
 			},
 			"aider": {
 				Command:    "aider",
 				Args:       []string{"--yes"},
 				Env:        map[string]string{},
 				StatusFile: "",
-				InitPrompt: "",
+				InitPrompt: defaultAiderPrompt,
 			},
 		},
 		UI: UIConfig{
@@ -144,7 +220,35 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.mergeAgentDefaults()
+
 	return cfg, nil
+}
+
+func (c *Config) mergeAgentDefaults() {
+	defaults := DefaultConfig()
+
+	for name, defaultCfg := range defaults.Agents {
+		if userCfg, exists := c.Agents[name]; exists {
+			if userCfg.StatusFile == "" {
+				userCfg.StatusFile = defaultCfg.StatusFile
+			}
+			if userCfg.Env == nil {
+				userCfg.Env = defaultCfg.Env
+			}
+			c.Agents[name] = userCfg
+		}
+	}
+}
+
+func (c *Config) GetEffectiveInitPrompt(agentType string) string {
+	if agentCfg, ok := c.Agents[agentType]; ok && agentCfg.InitPrompt != "" {
+		return agentCfg.InitPrompt
+	}
+	if c.Defaults.InitPrompt != "" {
+		return c.Defaults.InitPrompt
+	}
+	return defaultGlobalPrompt
 }
 
 // Save writes configuration to file

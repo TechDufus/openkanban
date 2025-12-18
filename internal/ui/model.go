@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1109,29 +1110,31 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	ticket.AgentType = agentType
 	ticket.AgentStatus = board.AgentIdle
 
-	isResume := ticket.AgentSpawnedAt != nil
-	args := m.buildAgentArgs(agentCfg, ticket)
+	isNewSession := agent.ShouldInjectContext(ticket)
+	args := m.buildAgentArgs(agentCfg, ticket, isNewSession)
 
-	if !isResume {
+	if isNewSession {
 		now := time.Now()
 		ticket.AgentSpawnedAt = &now
 	}
 
 	m.saveBoard()
 
-	if isResume {
-		m.notify("Resuming " + agentType)
-	} else {
+	if isNewSession {
 		m.notify("Starting " + agentType)
+	} else {
+		m.notify("Resuming " + agentType)
 	}
 
 	m.mode = ModeAgentView
 	m.focusedPane = ticket.ID
 
+	m.debugLogSpawn(agentCfg.Command, args, ticket)
+
 	return m, pane.Start(agentCfg.Command, args...)
 }
 
-func (m *Model) buildAgentArgs(cfg config.AgentConfig, ticket *board.Ticket) []string {
+func (m *Model) buildAgentArgs(cfg config.AgentConfig, ticket *board.Ticket, isNewSession bool) []string {
 	args := make([]string, len(cfg.Args))
 	copy(args, cfg.Args)
 
@@ -1140,16 +1143,28 @@ func (m *Model) buildAgentArgs(cfg config.AgentConfig, ticket *board.Ticket) []s
 		agentType = filepath.Base(agentType)
 	}
 
-	hasSession := ticket.AgentSpawnedAt != nil
+	promptTemplate := m.config.GetEffectiveInitPrompt(agentType)
 
 	switch agentType {
 	case "claude":
-		if hasSession && !containsFlag(args, "--continue", "-c") {
-			args = append(args, "--continue")
+		if isNewSession && promptTemplate != "" {
+			prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+			if prompt != "" {
+				args = append(args, "--append-system-prompt", prompt)
+			}
+		} else if !isNewSession {
+			if !containsFlag(args, "--continue", "-c") {
+				args = append(args, "--continue")
+			}
 		}
 	case "opencode":
 		args = append([]string{ticket.WorktreePath}, args...)
-		if hasSession {
+		if isNewSession && promptTemplate != "" {
+			prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+			if prompt != "" {
+				args = append(args, "-p", prompt)
+			}
+		} else if !isNewSession {
 			if sessionID := agent.FindOpencodeSession(ticket.WorktreePath); sessionID != "" {
 				args = append(args, "--session", sessionID)
 			}
@@ -1168,6 +1183,30 @@ func containsFlag(args []string, flags ...string) bool {
 		}
 	}
 	return false
+}
+
+func (m *Model) debugLogSpawn(command string, args []string, ticket *board.Ticket) {
+	debugPath := filepath.Join(ticket.WorktreePath, ".openkanban-debug.log")
+	f, err := os.Create(debugPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "=== OpenKanban Agent Spawn Debug ===\n")
+	fmt.Fprintf(f, "Time: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(f, "Ticket ID: %s\n", ticket.ID)
+	fmt.Fprintf(f, "Ticket Title: %s\n", ticket.Title)
+	fmt.Fprintf(f, "Ticket Description:\n%s\n", ticket.Description)
+	fmt.Fprintf(f, "AgentSpawnedAt: %v\n", ticket.AgentSpawnedAt)
+	fmt.Fprintf(f, "\n=== Command ===\n")
+	fmt.Fprintf(f, "Command: %s\n", command)
+	fmt.Fprintf(f, "Args count: %d\n", len(args))
+	for i, arg := range args {
+		fmt.Fprintf(f, "Arg[%d]: %s\n", i, arg)
+	}
+	fmt.Fprintf(f, "\n=== Full Command ===\n")
+	fmt.Fprintf(f, "%s %s\n", command, strings.Join(args, " "))
 }
 
 func (m *Model) stopAgent() (tea.Model, tea.Cmd) {
