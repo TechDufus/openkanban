@@ -6,6 +6,7 @@ import {
   type ServerMessage,
 } from "@openkanban/shared"
 import { boardStore } from "../store/board"
+import { moveTicketWithWorkflow, deleteTicketWithWorkflow } from "../store/workflow"
 import { ptyManager } from "../pty/manager"
 import { agentSpawner } from "../agent/spawner"
 
@@ -136,25 +137,33 @@ function handleTicketUpdate(
   }
 }
 
-function handleTicketDelete(ws: ServerWebSocket<WebSocketData>, ticketId: string): void {
-  const deleted = boardStore.deleteTicket(ticketId)
-  if (deleted) {
-    broadcast({ type: "ticket:deleted", ticketId })
-  } else {
-    sendError(ws, "Ticket not found")
+async function handleTicketDelete(ws: ServerWebSocket<WebSocketData>, ticketId: string): Promise<void> {
+  try {
+    const deleted = await deleteTicketWithWorkflow(ticketId, false)
+    if (deleted) {
+      broadcast({ type: "ticket:deleted", ticketId })
+    } else {
+      sendError(ws, "Ticket not found")
+    }
+  } catch (error) {
+    sendError(ws, error instanceof Error ? error.message : "Failed to delete ticket")
   }
 }
 
-function handleTicketMove(
+async function handleTicketMove(
   ws: ServerWebSocket<WebSocketData>,
   ticketId: string,
   status: Parameters<typeof boardStore.moveTicket>[1]
-): void {
-  const ticket = boardStore.moveTicket(ticketId, status)
-  if (ticket) {
-    broadcast({ type: "ticket:updated", ticket })
-  } else {
-    sendError(ws, "Ticket not found")
+): Promise<void> {
+  try {
+    const ticket = await moveTicketWithWorkflow(ticketId, status)
+    if (ticket) {
+      broadcast({ type: "ticket:updated", ticket })
+    } else {
+      sendError(ws, "Ticket not found")
+    }
+  } catch (error) {
+    sendError(ws, error instanceof Error ? error.message : "Failed to move ticket")
   }
 }
 
