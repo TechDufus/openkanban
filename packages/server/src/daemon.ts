@@ -1,9 +1,10 @@
 import fs from "node:fs"
 import path from "node:path"
 import { createApp } from "./api"
-import { handleWsOpen, handleWsClose, handleWsMessage } from "./ws/handler"
+import { handleWsOpen, handleWsClose, handleWsMessage, initAgentStatusBroadcast } from "./ws/handler"
 import { boardStore } from "./store/board"
 import { ptyManager } from "./pty/manager"
+import { agentSpawner } from "./agent/spawner"
 
 const CONFIG_DIR = path.join(process.env["HOME"] ?? "~", ".openkanban")
 const PID_FILE = path.join(CONFIG_DIR, "daemon.pid")
@@ -53,6 +54,8 @@ export class Daemon {
     process.on("SIGTERM", () => this.shutdown())
     process.on("SIGINT", () => this.shutdown())
 
+    initAgentStatusBroadcast()
+
     console.log(`[openkanban] Daemon started on port ${port} (PID ${process.pid})`)
   }
 
@@ -92,6 +95,7 @@ export class Daemon {
 
     this.server?.stop()
 
+    await agentSpawner.shutdown()
     await ptyManager.closeAll()
     boardStore.flush()
 

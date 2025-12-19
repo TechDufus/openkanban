@@ -7,6 +7,7 @@ import {
 } from "@openkanban/shared"
 import { boardStore } from "../store/board"
 import { ptyManager } from "../pty/manager"
+import { agentSpawner } from "../agent/spawner"
 
 interface WebSocketData {
   id: string
@@ -158,42 +159,20 @@ function handleTicketMove(
 }
 
 async function handleAgentSpawn(ws: ServerWebSocket<WebSocketData>, ticketId: string): Promise<void> {
-  const ticket = boardStore.getTicket(ticketId)
-  if (!ticket) {
-    sendError(ws, "Ticket not found")
-    return
-  }
-  
-  const cwd = ticket.worktreePath ?? process.cwd()
-  const sessionId = await ptyManager.spawn(ticketId, ["bash"], cwd)
-  
-  boardStore.updateTicket(ticketId, {
-    terminalSessionId: sessionId,
-    agentStatus: "idle",
-    agentSpawnedAt: new Date().toISOString(),
-  })
-  
-  const updatedTicket = boardStore.getTicket(ticketId)
-  if (updatedTicket) {
-    broadcast({ type: "ticket:updated", ticket: updatedTicket })
-    broadcast({ type: "agent:status", ticketId, status: "idle", sessionId })
+  try {
+    const sessionId = await agentSpawner.spawn(ticketId)
+    const updatedTicket = boardStore.getTicket(ticketId)
+    if (updatedTicket) {
+      broadcast({ type: "ticket:updated", ticket: updatedTicket })
+      broadcast({ type: "agent:status", ticketId, status: "idle", sessionId })
+    }
+  } catch (error) {
+    sendError(ws, error instanceof Error ? error.message : "Failed to spawn agent")
   }
 }
 
-function handleAgentKill(ws: ServerWebSocket<WebSocketData>, ticketId: string): void {
-  const ticket = boardStore.getTicket(ticketId)
-  if (!ticket?.terminalSessionId) {
-    sendError(ws, "No agent running for ticket")
-    return
-  }
-  
-  ptyManager.kill(ticket.terminalSessionId)
-  
-  boardStore.updateTicket(ticketId, {
-    terminalSessionId: undefined,
-    agentStatus: "none",
-  })
-  
+async function handleAgentKill(_ws: ServerWebSocket<WebSocketData>, ticketId: string): Promise<void> {
+  await agentSpawner.kill(ticketId)
   const updatedTicket = boardStore.getTicket(ticketId)
   if (updatedTicket) {
     broadcast({ type: "ticket:updated", ticket: updatedTicket })
@@ -217,7 +196,7 @@ function handleTerminalUnsubscribe(ws: ServerWebSocket<WebSocketData>, sessionId
 }
 
 function handleTerminalInput(
-  ws: ServerWebSocket<WebSocketData>,
+  _ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
   data: string
 ): void {
@@ -225,7 +204,7 @@ function handleTerminalInput(
 }
 
 function handleTerminalResize(
-  ws: ServerWebSocket<WebSocketData>,
+  _ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
   cols: number,
   rows: number
@@ -266,4 +245,14 @@ export function broadcastTerminalExit(sessionId: string, code: number): void {
       client.send(msg)
     }
   }
+}
+
+export function initAgentStatusBroadcast(): void {
+  agentSpawner.onStatusChange((ticketId, status) => {
+    const ticket = boardStore.getTicket(ticketId)
+    if (ticket) {
+      broadcast({ type: "ticket:updated", ticket })
+      broadcast({ type: "agent:status", ticketId, status, sessionId: ticket.terminalSessionId })
+    }
+  })
 }
