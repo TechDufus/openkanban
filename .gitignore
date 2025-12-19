@@ -1,6 +1,9 @@
 # Binary
 openkanban
 
+# Dependencies
+node_modules/
+
 # IDE
 .idea/
 .vscode/
