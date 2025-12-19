@@ -9,6 +9,7 @@ export interface NavigationActions {
   onDeleteTicket?: (ticketId: string) => void
   onSpawnAgent?: (ticketId: string) => void
   onKillAgent?: (ticketId: string) => void
+  onOpenAgent?: (ticketId: string) => void
 }
 
 export function useNavigation(actions: NavigationActions = {}) {
@@ -135,8 +136,9 @@ export function useNavigation(actions: NavigationActions = {}) {
         break
       }
       case "enter": {
-        if (selectedTicketId()) {
-          setMode("AGENT_VIEW")
+        const ticketId = selectedTicketId()
+        if (ticketId) {
+          actions.onOpenAgent?.(ticketId)
         }
         break
       }

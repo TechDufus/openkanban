@@ -31,9 +31,8 @@
       "@openkanban/tui/*": ["./packages/tui/src/*"]
     },
     
-    // JSX for TUI package
+    // JSX - let packages override this
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
     
     // Other
     "skipLibCheck": true,

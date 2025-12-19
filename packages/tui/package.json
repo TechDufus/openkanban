@@ -13,6 +13,7 @@
     "@openkanban/shared": "workspace:*",
     "@opentui/core": "^0.1.62",
     "@opentui/solid": "^0.1.62",
+    "ghostty-opentui": "1.3.7",
     "solid-js": "^1.9.0"
   }
 }

@@ -1,11 +1,13 @@
-import { onMount, onCleanup, Show, For, createMemo } from "solid-js"
-import type { Board, Column, Ticket } from "@openkanban/shared"
+import { onMount, onCleanup, Show, For, createMemo, createEffect } from "solid-js"
+import type { Board, Column, Ticket, ServerMessage } from "@openkanban/shared"
 import { Connection } from "./client/connection"
 import { BoardProvider, useBoard } from "./stores/board"
 import { UIProvider, useUI } from "./stores/ui"
+import { TerminalProvider, useTerminal } from "./stores/terminal"
 import { useNavigation } from "./hooks/useNavigation"
 import { HelpOverlay } from "./components/HelpOverlay"
 import { ConfirmDialog } from "./components/ConfirmDialog"
+import { Terminal } from "./components/Terminal"
 
 interface AppProps {
   serverPort: number
@@ -15,22 +17,40 @@ export function App(props: AppProps) {
   return (
     <UIProvider>
       <BoardProvider>
-        <AppContent serverPort={props.serverPort} />
+        <TerminalProvider>
+          <AppContent serverPort={props.serverPort} />
+        </TerminalProvider>
       </BoardProvider>
     </UIProvider>
   )
 }
 
 function AppContent(props: { serverPort: number }) {
-  const { connectionStatus, setConnectionStatus, mode } = useUI()
+  const { connectionStatus, setConnectionStatus, mode, setMode, selectedTicketId: uiSelectedTicketId } = useUI()
   const { board, handleServerMessage, getTicket } = useBoard()
+  const { appendOutput, setBuffer } = useTerminal()
   
   let connection: Connection | null = null
+
+  const handleMessage = (msg: ServerMessage) => {
+    handleServerMessage(msg)
+    
+    switch (msg.type) {
+      case "terminal:output":
+        appendOutput(msg.sessionId, msg.data)
+        break
+      case "terminal:buffer":
+        setBuffer(msg.sessionId, msg.data)
+        break
+      case "terminal:exit":
+        break
+    }
+  }
 
   onMount(() => {
     connection = new Connection(props.serverPort, {
       onStatusChange: setConnectionStatus,
-      onMessage: handleServerMessage,
+      onMessage: handleMessage,
     })
     connection.connect()
   })
@@ -49,6 +69,13 @@ function AppContent(props: { serverPort: number }) {
     onKillAgent: (ticketId) => {
       connection?.send({ type: "agent:kill", ticketId })
     },
+    onOpenAgent: (ticketId) => {
+      const ticket = getTicket(ticketId)
+      if (ticket?.terminalSessionId) {
+        connection?.send({ type: "terminal:subscribe", sessionId: ticket.terminalSessionId })
+        setMode("AGENT_VIEW")
+      }
+    },
   })
 
   const selectedTicket = createMemo(() => {
@@ -56,28 +83,85 @@ function AppContent(props: { serverPort: number }) {
     return id ? getTicket(id) : undefined
   })
 
+  const activeTerminalSessionId = createMemo(() => {
+    return selectedTicket()?.terminalSessionId
+  })
+
+  const handleTerminalInput = (data: string) => {
+    const sessionId = activeTerminalSessionId()
+    if (sessionId) {
+      connection?.send({ type: "terminal:input", sessionId, data })
+    }
+  }
+
+  const handleTerminalExit = () => {
+    const sessionId = activeTerminalSessionId()
+    if (sessionId) {
+      connection?.send({ type: "terminal:unsubscribe", sessionId })
+    }
+    setMode("NORMAL")
+  }
+
   return (
     <box flexDirection="column" width="100%" height="100%">
-      <Header status={connectionStatus()} />
-      
-      <Show when={board()} fallback={<LoadingView status={connectionStatus()} />}>
-        <Show when={mode() === "HELP"}>
-          <HelpOverlay />
-        </Show>
-        
-        <Show when={mode() === "CONFIRM"}>
-          <ConfirmDialog 
-            title="Delete Ticket?"
-            message={selectedTicket()?.title ?? "Selected ticket"}
-          />
-        </Show>
-        
-        <Show when={mode() !== "HELP" && mode() !== "CONFIRM"}>
-          <BoardView board={board()!} selectedTicketId={selectedTicketId()} />
-        </Show>
+      <Show when={mode() === "AGENT_VIEW" && activeTerminalSessionId()}>
+        <AgentView 
+          sessionId={activeTerminalSessionId()!}
+          ticketTitle={selectedTicket()?.title ?? "Agent"}
+          onInput={handleTerminalInput}
+          onExit={handleTerminalExit}
+        />
       </Show>
 
-      <StatusBar />
+      <Show when={mode() !== "AGENT_VIEW"}>
+        <Header status={connectionStatus()} />
+        
+        <Show when={board()} fallback={<LoadingView status={connectionStatus()} />}>
+          <Show when={mode() === "HELP"}>
+            <HelpOverlay />
+          </Show>
+          
+          <Show when={mode() === "CONFIRM"}>
+            <ConfirmDialog 
+              title="Delete Ticket?"
+              message={selectedTicket()?.title ?? "Selected ticket"}
+            />
+          </Show>
+          
+          <Show when={mode() !== "HELP" && mode() !== "CONFIRM"}>
+            <BoardView board={board()!} selectedTicketId={selectedTicketId()} />
+          </Show>
+        </Show>
+
+        <StatusBar />
+      </Show>
+    </box>
+  )
+}
+
+interface AgentViewProps {
+  sessionId: string
+  ticketTitle: string
+  onInput: (data: string) => void
+  onExit: () => void
+}
+
+function AgentView(props: AgentViewProps) {
+  return (
+    <box flexDirection="column" width="100%" height="100%">
+      <box height={1} backgroundColor="#313244">
+        <text color="#89b4fa" bold>{" Agent: "}</text>
+        <text color="#cdd6f4">{props.ticketTitle}</text>
+        <box flex={1} />
+        <text color="#6c7086">{"Ctrl+g to exit "}</text>
+      </box>
+      <box flex={1}>
+        <Terminal 
+          sessionId={props.sessionId}
+          onInput={props.onInput}
+          onExit={props.onExit}
+        />
+      </box>
     </box>
   )
 }
@@ -224,7 +308,7 @@ function StatusBar() {
       case "HELP": return "Press ? or Esc to close help"
       case "CONFIRM": return "Press [y]es or [n]o"
       case "AGENT_VIEW": return "Ctrl+g to exit agent view"
-      default: return "[q]uit [n]ew [h/l]columns [j/k]tickets [?]help"
+      default: return "[q]uit [n]ew [h/l]columns [j/k]tickets [Enter]agent [?]help"
     }
   }
 
