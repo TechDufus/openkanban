@@ -8,6 +8,7 @@ import { useNavigation } from "./hooks/useNavigation"
 import { HelpOverlay } from "./components/HelpOverlay"
 import { ConfirmDialog } from "./components/ConfirmDialog"
 import { Terminal } from "./components/Terminal"
+import { TicketForm } from "./components/TicketForm"
 
 interface AppProps {
   serverPort: number
@@ -26,7 +27,8 @@ export function App(props: AppProps) {
 }
 
 function AppContent(props: { serverPort: number }) {
-  const { connectionStatus, setConnectionStatus, mode, setMode, selectedTicketId: uiSelectedTicketId } = useUI()
+  const ui = useUI()
+  const { connectionStatus, setConnectionStatus, mode, setMode, showNotification, setSelectedTicketId, activeColumn } = ui
   const { board, handleServerMessage, getTicket } = useBoard()
   const { appendOutput, setBuffer } = useTerminal()
   
@@ -59,6 +61,19 @@ function AppContent(props: { serverPort: number }) {
     connection?.disconnect()
   })
 
+  createEffect(() => {
+    const b = board()
+    if (b && !ui.selectedTicketId()) {
+      const col = b.columns[activeColumn()]
+      if (col) {
+        const tickets = b.tickets.filter(t => t.status === col.key)
+        if (tickets[0]) {
+          setSelectedTicketId(tickets[0].id)
+        }
+      }
+    }
+  })
+
   const { selectedTicketId } = useNavigation({
     onDeleteTicket: (ticketId) => {
       connection?.send({ type: "ticket:delete", ticketId })
@@ -71,9 +86,13 @@ function AppContent(props: { serverPort: number }) {
     },
     onOpenAgent: (ticketId) => {
       const ticket = getTicket(ticketId)
+      console.log(`[DEBUG] onOpenAgent: ticketId=${ticketId}, ticket=`, ticket)
+      console.log(`[DEBUG] terminalSessionId=${ticket?.terminalSessionId}`)
       if (ticket?.terminalSessionId) {
         connection?.send({ type: "terminal:subscribe", sessionId: ticket.terminalSessionId })
         setMode("AGENT_VIEW")
+      } else {
+        showNotification("No agent running - press 's' to spawn")
       }
     },
   })
@@ -99,6 +118,11 @@ function AppContent(props: { serverPort: number }) {
     if (sessionId) {
       connection?.send({ type: "terminal:unsubscribe", sessionId })
     }
+    setMode("NORMAL")
+  }
+
+  const handleCreateTicket = (title: string) => {
+    connection?.send({ type: "ticket:create", ticket: { title } })
     setMode("NORMAL")
   }
 
@@ -128,7 +152,15 @@ function AppContent(props: { serverPort: number }) {
             />
           </Show>
           
-          <Show when={mode() !== "HELP" && mode() !== "CONFIRM"}>
+          <Show when={mode() === "CREATE_TICKET"}>
+            <TicketForm 
+              mode="create"
+              onSubmit={handleCreateTicket}
+              onCancel={() => setMode("NORMAL")}
+            />
+          </Show>
+          
+          <Show when={mode() !== "HELP" && mode() !== "CONFIRM" && mode() !== "CREATE_TICKET"}>
             <BoardView board={board()!} selectedTicketId={selectedTicketId()} />
           </Show>
         </Show>
@@ -308,6 +340,8 @@ function StatusBar() {
       case "HELP": return "Press ? or Esc to close help"
       case "CONFIRM": return "Press [y]es or [n]o"
       case "AGENT_VIEW": return "Ctrl+g to exit agent view"
+      case "CREATE_TICKET": return "[Enter] Save  [Esc] Cancel"
+      case "EDIT_TICKET": return "[Enter] Save  [Esc] Cancel"
       default: return "[q]uit [n]ew [h/l]columns [j/k]tickets [Enter]agent [?]help"
     }
   }

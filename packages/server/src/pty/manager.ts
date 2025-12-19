@@ -1,10 +1,24 @@
 import type { ServerWebSocket } from "bun"
 import { broadcastTerminalOutput, broadcastTerminalExit } from "../ws/handler"
 
+interface BunTerminal {
+  write(data: string | Uint8Array): void
+  resize(cols: number, rows: number): void
+  dispose(): void
+}
+
+interface BunTerminalOptions {
+  cols: number
+  rows: number
+  data: (term: BunTerminal, data: Uint8Array) => void
+  exit: (term: BunTerminal, exitCode: number) => void
+}
+
 interface PtySession {
   id: string
   ticketId: string
-  proc: ReturnType<typeof Bun.spawn>
+  terminal: BunTerminal
+  process: ReturnType<typeof Bun.spawn>
   buffer: string[]
   subscribers: Set<ServerWebSocket<unknown>>
   cols: number
@@ -12,105 +26,78 @@ interface PtySession {
 }
 
 const MAX_BUFFER_LINES = 10000
+const DEFAULT_COLS = 120
+const DEFAULT_ROWS = 40
 
 class PtyManager {
   private sessions = new Map<string, PtySession>()
 
   async spawn(ticketId: string, command: string[], cwd: string): Promise<string> {
     const sessionId = crypto.randomUUID()
+    const [cmd = "bash", ...args] = command
 
-    const proc = Bun.spawn(command, {
-      cwd,
-      env: { ...process.env, TERM: "xterm-256color" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+    console.log(`[pty] Spawning: ${cmd} ${args.join(" ")} in ${cwd}`)
+
+    const buffer: string[] = []
+    const decoder = new TextDecoder()
+
+    const BunTerminalClass = (Bun as unknown as { Terminal: new (opts: BunTerminalOptions) => BunTerminal }).Terminal
+
+    const terminal = new BunTerminalClass({
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
+      data: (_term, data) => {
+        const text = decoder.decode(data)
+        this.appendToBuffer(buffer, text)
+        broadcastTerminalOutput(sessionId, text)
+      },
+      exit: (_term, exitCode) => {
+        console.log(`[pty] Session ${sessionId} exited with code ${exitCode}`)
+        console.log(`[pty] Buffer contents: ${buffer.slice(-5).join("\\n")}`)
+        broadcastTerminalExit(sessionId, exitCode)
+        this.sessions.delete(sessionId)
+      },
     })
+
+    const proc = Bun.spawn([cmd, ...args], {
+      terminal: terminal as unknown as undefined,
+      cwd,
+      env: process.env,
+    })
+
+    console.log(`[pty] PID: ${proc.pid}`)
 
     const session: PtySession = {
       id: sessionId,
       ticketId,
-      proc,
-      buffer: [],
+      terminal,
+      process: proc,
+      buffer,
       subscribers: new Set(),
-      cols: 80,
-      rows: 24,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
     }
 
     this.sessions.set(sessionId, session)
 
-    this.streamOutput(session)
-
-    proc.exited.then((code) => {
-      broadcastTerminalExit(sessionId, code)
-      this.sessions.delete(sessionId)
-    })
+    console.log(`[pty] Spawned session ${sessionId} for ticket ${ticketId}: ${cmd} ${args.join(" ")}`)
 
     return sessionId
   }
 
-  private async streamOutput(session: PtySession): Promise<void> {
-    const { proc, id } = session
-
-    const stdout = proc.stdout
-    if (stdout && typeof stdout !== "number") {
-      const reader = stdout.getReader()
-      const decoder = new TextDecoder()
-
-      const readLoop = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-
-            const text = decoder.decode(value)
-            this.appendToBuffer(session, text)
-            broadcastTerminalOutput(id, text)
-          }
-        } catch {
-        }
-      }
-
-      readLoop()
-    }
-
-    const stderr = proc.stderr
-    if (stderr && typeof stderr !== "number") {
-      const reader = stderr.getReader()
-      const decoder = new TextDecoder()
-
-      const readLoop = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-
-            const text = decoder.decode(value)
-            this.appendToBuffer(session, text)
-            broadcastTerminalOutput(id, text)
-          }
-        } catch {
-        }
-      }
-
-      readLoop()
-    }
-  }
-
-  private appendToBuffer(session: PtySession, text: string): void {
+  private appendToBuffer(buffer: string[], text: string): void {
     const lines = text.split("\n")
-    session.buffer.push(...lines)
+    buffer.push(...lines)
 
-    if (session.buffer.length > MAX_BUFFER_LINES) {
-      session.buffer = session.buffer.slice(-MAX_BUFFER_LINES)
+    if (buffer.length > MAX_BUFFER_LINES) {
+      buffer.splice(0, buffer.length - MAX_BUFFER_LINES)
     }
   }
 
   write(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId)
-    const stdin = session?.proc.stdin
-    if (stdin && typeof stdin !== "number") {
-      stdin.write(data)
+    if (session) {
+      session.terminal.write(data)
     }
   }
 
@@ -119,6 +106,7 @@ class PtyManager {
     if (session) {
       session.cols = cols
       session.rows = rows
+      session.terminal.resize(cols, rows)
     }
   }
 
@@ -147,7 +135,8 @@ class PtyManager {
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (session) {
-      session.proc.kill()
+      session.process.kill()
+      session.terminal.dispose()
       this.sessions.delete(sessionId)
     }
   }
@@ -163,7 +152,8 @@ class PtyManager {
 
   async closeAll(): Promise<void> {
     for (const session of this.sessions.values()) {
-      session.proc.kill()
+      session.process.kill()
+      session.terminal.dispose()
     }
     this.sessions.clear()
   }

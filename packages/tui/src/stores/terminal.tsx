@@ -11,6 +11,7 @@ interface TerminalSession {
 interface TerminalContextValue {
   sessions: () => Map<SessionID, TerminalSession>
   getSession: (sessionId: SessionID) => TerminalSession | undefined
+  getBuffer: (sessionId: SessionID) => string
   appendOutput: (sessionId: SessionID, data: string) => void
   setBuffer: (sessionId: SessionID, data: string) => void
   createSession: (sessionId: SessionID, cols?: number, rows?: number) => void
@@ -22,6 +23,7 @@ const TerminalContext = createContext<TerminalContextValue>()
 
 export const TerminalProvider: ParentComponent = (props) => {
   const [sessions, setSessions] = createSignal<Map<SessionID, TerminalSession>>(new Map())
+  const [renderTrigger, setRenderTrigger] = createSignal(0)
 
   const getSession = (sessionId: SessionID): TerminalSession | undefined => {
     return sessions().get(sessionId)
@@ -29,6 +31,8 @@ export const TerminalProvider: ParentComponent = (props) => {
 
   const createSession = (sessionId: SessionID, cols = 120, rows = 40): void => {
     setSessions((prev) => {
+      if (prev.has(sessionId)) return prev
+      
       const next = new Map(prev)
       next.set(sessionId, { sessionId, buffer: "", cols, rows })
       return next
@@ -43,47 +47,56 @@ export const TerminalProvider: ParentComponent = (props) => {
     })
   }
 
-  const appendOutput = (sessionId: SessionID, data: string): void => {
-    setSessions((prev) => {
-      const session = prev.get(sessionId)
-      if (!session) {
+  const ensureSession = (sessionId: SessionID): TerminalSession => {
+    let session = sessions().get(sessionId)
+    
+    if (!session) {
+      session = { sessionId, buffer: "", cols: 120, rows: 40 }
+      setSessions((prev) => {
         const next = new Map(prev)
-        next.set(sessionId, { sessionId, buffer: data, cols: 120, rows: 40 })
+        next.set(sessionId, session!)
         return next
-      }
-      const next = new Map(prev)
-      next.set(sessionId, { ...session, buffer: session.buffer + data })
-      return next
-    })
+      })
+    }
+    
+    return session
+  }
+
+  const appendOutput = (sessionId: SessionID, data: string): void => {
+    const session = ensureSession(sessionId)
+    session.buffer += data
+    setRenderTrigger((n) => n + 1)
   }
 
   const setBuffer = (sessionId: SessionID, data: string): void => {
-    setSessions((prev) => {
-      const session = prev.get(sessionId)
-      if (!session) {
-        const next = new Map(prev)
-        next.set(sessionId, { sessionId, buffer: data, cols: 120, rows: 40 })
-        return next
-      }
-      const next = new Map(prev)
-      next.set(sessionId, { ...session, buffer: data })
-      return next
-    })
+    const session = ensureSession(sessionId)
+    session.buffer = data
+    setRenderTrigger((n) => n + 1)
+  }
+
+  const getBuffer = (sessionId: SessionID): string => {
+    renderTrigger()
+    
+    const session = sessions().get(sessionId)
+    if (!session) return ""
+    
+    return session.buffer
   }
 
   const resizeSession = (sessionId: SessionID, cols: number, rows: number): void => {
-    setSessions((prev) => {
-      const session = prev.get(sessionId)
-      if (!session) return prev
-      const next = new Map(prev)
-      next.set(sessionId, { ...session, cols, rows })
-      return next
-    })
+    const session = sessions().get(sessionId)
+    if (!session) return
+    
+    session.cols = cols
+    session.rows = rows
+    
+    setRenderTrigger((n) => n + 1)
   }
 
   const value: TerminalContextValue = {
     sessions,
     getSession,
+    getBuffer,
     appendOutput,
     setBuffer,
     createSession,

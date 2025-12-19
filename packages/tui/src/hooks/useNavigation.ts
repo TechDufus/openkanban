@@ -127,7 +127,8 @@ export function useNavigation(actions: NavigationActions = {}) {
         }
         break
       }
-      case "S": {
+      case "S":
+      case "shift+s": {
         const ticketId = selectedTicketId()
         if (ticketId) {
           actions.onKillAgent?.(ticketId)
@@ -135,7 +136,8 @@ export function useNavigation(actions: NavigationActions = {}) {
         }
         break
       }
-      case "enter": {
+      case "enter":
+      case "return": {
         const ticketId = selectedTicketId()
         if (ticketId) {
           actions.onOpenAgent?.(ticketId)

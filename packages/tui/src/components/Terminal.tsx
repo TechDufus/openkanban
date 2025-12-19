@@ -1,10 +1,7 @@
-import { extend, useKeyboard } from "@opentui/solid"
-import { GhosttyTerminalRenderable } from "ghostty-opentui/terminal-buffer"
+import { useKeyboard } from "@opentui/solid"
 import { useTerminal } from "../stores/terminal"
 import { translateKey, isTerminalKey } from "../lib/keys"
 import type { SessionID } from "@openkanban/shared"
-
-extend({ "ghostty-terminal": GhosttyTerminalRenderable })
 
 interface TerminalProps {
   sessionId: SessionID
@@ -15,12 +12,9 @@ interface TerminalProps {
 }
 
 export function Terminal(props: TerminalProps) {
-  const { getSession } = useTerminal()
-  
-  const session = () => getSession(props.sessionId)
-  const buffer = () => session()?.buffer ?? ""
-  const cols = () => props.cols ?? session()?.cols ?? 120
-  const rows = () => props.rows ?? session()?.rows ?? 40
+  const { getBuffer } = useTerminal()
+
+  const buffer = () => getBuffer(props.sessionId)
 
   useKeyboard((event) => {
     if (!isTerminalKey(event)) {
@@ -37,28 +31,14 @@ export function Terminal(props: TerminalProps) {
   })
 
   return (
-    <box flexDirection="column" width="100%" height="100%">
-      <ghostty-terminal 
-        ansi={buffer()} 
-        cols={cols()} 
-        rows={rows()}
-        persistent={true}
-      />
-    </box>
+    <scroll-box 
+      flexDirection="column" 
+      width="100%" 
+      height="100%"
+      stickyScroll={true}
+      stickyStart="bottom"
+    >
+      <text>{buffer()}</text>
+    </scroll-box>
   )
-}
-
-declare module "solid-js" {
-  namespace JSX {
-    interface IntrinsicElements {
-      "ghostty-terminal": {
-        ansi?: string
-        cols?: number
-        rows?: number
-        persistent?: boolean
-        limit?: number
-        trimEnd?: boolean
-      }
-    }
-  }
 }

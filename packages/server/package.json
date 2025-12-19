@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lydell/node-pty": "1.1.0",
     "@openkanban/shared": "workspace:*",
     "hono": "^4.6.0"
   }

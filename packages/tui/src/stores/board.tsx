@@ -30,6 +30,8 @@ export const BoardProvider: ParentComponent = (props) => {
         break
 
       case "ticket:updated":
+        console.log(`[DEBUG] ticket:updated received:`, msg.ticket)
+        console.log(`[DEBUG] terminalSessionId in msg:`, msg.ticket.terminalSessionId)
         setBoard((prev) => {
           if (!prev) return prev
           return {

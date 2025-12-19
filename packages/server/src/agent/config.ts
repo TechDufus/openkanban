@@ -28,6 +28,18 @@ const DEFAULT_AGENTS: AgentConfig[] = [
     env: {},
     initPrompt: "{{Title}}\n\n{{Description}}",
   },
+  {
+    name: "bash",
+    command: "bash",
+    args: [],
+    env: {},
+  },
+  {
+    name: "shell",
+    command: process.env["SHELL"] ?? "/bin/sh",
+    args: [],
+    env: {},
+  },
 ]
 
 class AgentConfigManager {

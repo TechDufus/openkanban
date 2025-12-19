@@ -31,7 +31,7 @@ class AgentSpawner {
       return existingSession.sessionId
     }
 
-    const resolvedAgentName = agentName ?? ticket.agentType ?? boardStore.getBoard()?.settings.defaultAgent ?? "opencode"
+    const resolvedAgentName = agentName ?? ticket.agentType ?? boardStore.getBoard()?.settings.defaultAgent ?? "shell"
     const config = agentConfigManager.getOrDefault(resolvedAgentName)
 
     const cwd = ticket.worktreePath || process.cwd()

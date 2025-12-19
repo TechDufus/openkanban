@@ -111,6 +111,7 @@ function routeMessage(ws: ServerWebSocket<WebSocketData>, msg: ClientMessage): v
 }
 
 function handleBoardSubscribe(ws: ServerWebSocket<WebSocketData>): void {
+  console.log(`[ws] Client ${ws.data.id} subscribed to board`)
   ws.data.subscribedToBoard = true
   const board = boardStore.getBoard()
   send(ws, { type: "board:state", board })
@@ -169,21 +170,27 @@ async function handleTicketMove(
 
 async function handleAgentSpawn(ws: ServerWebSocket<WebSocketData>, ticketId: string): Promise<void> {
   try {
+    console.log(`[ws] Spawning agent for ticket ${ticketId}`)
     const sessionId = await agentSpawner.spawn(ticketId)
+    console.log(`[ws] Agent spawned with session ${sessionId}`)
     const updatedTicket = boardStore.getTicket(ticketId)
     if (updatedTicket) {
+      console.log(`[ws] Broadcasting ticket update with sessionId: ${updatedTicket.terminalSessionId}`)
       broadcast({ type: "ticket:updated", ticket: updatedTicket })
       broadcast({ type: "agent:status", ticketId, status: "idle", sessionId })
     }
   } catch (error) {
+    console.error(`[ws] Agent spawn failed:`, error)
     sendError(ws, error instanceof Error ? error.message : "Failed to spawn agent")
   }
 }
 
 async function handleAgentKill(_ws: ServerWebSocket<WebSocketData>, ticketId: string): Promise<void> {
+  console.log(`[ws] Killing agent for ticket ${ticketId}`)
   await agentSpawner.kill(ticketId)
   const updatedTicket = boardStore.getTicket(ticketId)
   if (updatedTicket) {
+    console.log(`[ws] Agent killed, broadcasting update`)
     broadcast({ type: "ticket:updated", ticket: updatedTicket })
     broadcast({ type: "agent:status", ticketId, status: "none" })
   }
@@ -231,11 +238,15 @@ function sendError(ws: ServerWebSocket<WebSocketData>, message: string): void {
 
 export function broadcast(msg: ServerMessage): void {
   const data = serializeServerMessage(msg)
-  for (const [, client] of clients) {
+  let sentCount = 0
+  for (const [id, client] of clients) {
+    console.log(`[ws] Checking client ${id}: subscribedToBoard=${client.data.subscribedToBoard}`)
     if (client.data.subscribedToBoard) {
       client.send(data)
+      sentCount++
     }
   }
+  console.log(`[ws] Broadcast ${msg.type} to ${sentCount} clients`)
 }
 
 export function broadcastTerminalOutput(sessionId: string, data: string): void {
