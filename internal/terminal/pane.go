@@ -14,60 +14,33 @@ import (
 )
 
 const (
-	// renderInterval limits redraws to ~20fps to prevent flicker from spinners
 	renderInterval = 50 * time.Millisecond
-
-	// defaultScrollback is the max lines to keep in scrollback buffer
-	defaultScrollback = 10000
-
-	// readBufferSize is the PTY read buffer size (large to reduce redraws)
 	readBufferSize = 65536
 )
 
-// Pane represents an embedded terminal pane with PTY and vt10x emulation
 type Pane struct {
-	// Identity
-	id string
-
-	// Core terminal state
+	id      string
 	vt      vt10x.Terminal
 	pty     *os.File
 	cmd     *exec.Cmd
 	mu      sync.Mutex
 	running bool
 	exitErr error
-
-	// Working directory for the command
 	workdir string
+	width   int
+	height  int
 
-	// Dimensions
-	width  int
-	height int
-
-	// Render optimization
 	cachedView      string
 	lastRender      time.Time
 	dirty           bool
 	renderScheduled bool
-
-	// Scrollback buffer (vt10x doesn't have built-in scrollback)
-	scrollback    []string
-	scrollOffset  int
-	maxScrollback int
-
-	// Raw output buffer for reliable scrollback
-	outputBuffer []byte
-	lineBuffer   []byte // accumulates partial lines
 }
 
-// New creates a new terminal pane with the given dimensions
 func New(id string, width, height int) *Pane {
 	return &Pane{
-		id:            id,
-		width:         width,
-		height:        height,
-		maxScrollback: defaultScrollback,
-		scrollback:    make([]string, 0),
+		id:     id,
+		width:  width,
+		height: height,
 	}
 }
 
@@ -95,7 +68,6 @@ func (p *Pane) ExitErr() error {
 	return p.exitErr
 }
 
-// SetSize updates the pane dimensions and resizes PTY/vt10x
 func (p *Pane) SetSize(width, height int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -105,15 +77,10 @@ func (p *Pane) SetSize(width, height int) {
 	p.dirty = true
 	p.cachedView = ""
 
-	// Reset scroll to live view on resize
-	p.scrollOffset = 0
-
-	// Resize virtual terminal
 	if p.vt != nil {
 		p.vt.Resize(width, height)
 	}
 
-	// Resize PTY
 	if p.pty != nil && p.running {
 		pty.Setsize(p.pty, &pty.Winsize{
 			Rows: uint16(height),
@@ -292,27 +259,6 @@ func (p *Pane) handleOutput(data []byte) {
 
 	p.vt.Write(data)
 	p.dirty = true
-
-	p.captureOutputLines(data)
-}
-
-func (p *Pane) captureOutputLines(data []byte) {
-	p.outputBuffer = append(p.outputBuffer, data...)
-
-	for _, b := range data {
-		if b == '\n' {
-			line := string(p.lineBuffer)
-			line = stripANSI(line)
-			if strings.TrimSpace(line) != "" {
-				p.addToScrollbackUnlocked(line)
-			}
-			p.lineBuffer = p.lineBuffer[:0]
-		} else if b == '\r' {
-			continue
-		} else {
-			p.lineBuffer = append(p.lineBuffer, b)
-		}
-	}
 }
 
 // scheduleRenderTick returns a Cmd to trigger render after throttle interval
@@ -338,6 +284,41 @@ func (p *Pane) scheduleRenderTick() tea.Cmd {
 }
 
 // --- Key Handling (Issue #15) ---
+
+func (p *Pane) HandleMouse(msg tea.MouseMsg) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.running || p.pty == nil {
+		return
+	}
+
+	var seq []byte
+	x, y := msg.X+1, msg.Y+1
+	if x > 223 {
+		x = 223
+	}
+	if y > 223 {
+		y = 223
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonWheelDown:
+		seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonLeft:
+		seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonRight:
+		seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonMiddle:
+		seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
+	}
+
+	if len(seq) > 0 {
+		p.pty.Write(seq)
+	}
+}
 
 // HandleKey processes a key event and sends to PTY
 func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
@@ -415,62 +396,6 @@ func (p *Pane) translateKey(msg tea.KeyMsg) []byte {
 	return nil
 }
 
-// addToScrollbackUnlocked adds a line to scrollback with deduplication (must hold mu)
-func (p *Pane) addToScrollbackUnlocked(line string) {
-	// Deduplicate against recent entries
-	checkCount := 20
-	if checkCount > len(p.scrollback) {
-		checkCount = len(p.scrollback)
-	}
-	for i := len(p.scrollback) - checkCount; i < len(p.scrollback); i++ {
-		if i >= 0 && p.scrollback[i] == line {
-			return
-		}
-	}
-
-	p.scrollback = append(p.scrollback, line)
-	if len(p.scrollback) > p.maxScrollback {
-		// Trim from front
-		p.scrollback = p.scrollback[len(p.scrollback)-p.maxScrollback:]
-	}
-}
-
-// ScrollUp scrolls the view up by n lines
-func (p *Pane) ScrollUp(n int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.scrollOffset += n
-	if p.scrollOffset > len(p.scrollback) {
-		p.scrollOffset = len(p.scrollback)
-	}
-	p.dirty = true
-	p.cachedView = ""
-}
-
-// ScrollDown scrolls the view down by n lines (toward live view)
-func (p *Pane) ScrollDown(n int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.scrollOffset -= n
-	if p.scrollOffset < 0 {
-		p.scrollOffset = 0
-	}
-	p.dirty = true
-	p.cachedView = ""
-}
-
-// ScrollToBottom returns to live view
-func (p *Pane) ScrollToBottom() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.scrollOffset = 0
-	p.dirty = true
-	p.cachedView = ""
-}
-
 // GetContent returns the current terminal content as plain text for analysis.
 func (p *Pane) GetContent() string {
 	p.mu.Lock()
@@ -523,7 +448,6 @@ func (p *Pane) View() string {
 	return p.cachedView
 }
 
-// renderVTUnlocked renders the vt10x state to a string (must hold mu)
 func (p *Pane) renderVTUnlocked() string {
 	if p.vt == nil {
 		return "Terminal not initialized"
@@ -537,12 +461,6 @@ func (p *Pane) renderVTUnlocked() string {
 		return ""
 	}
 
-	// If scrolled up, show scrollback + partial screen
-	if p.scrollOffset > 0 && len(p.scrollback) > 0 {
-		return p.renderWithScrollbackUnlocked(cols, rows)
-	}
-
-	// Live view - render current vt screen
 	return p.renderLiveScreenUnlocked(cols, rows)
 }
 
@@ -610,48 +528,6 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 	}
 
 	return result.String()
-}
-
-// renderWithScrollbackUnlocked renders scrollback + partial live view (must hold mu and vt.Lock)
-// scrollback[0]=oldest, scrollback[len-1]=newest; scrollOffset=N shows content N lines before newest
-func (p *Pane) renderWithScrollbackUnlocked(cols, rows int) string {
-	var lines []string
-
-	scrollbackEnd := len(p.scrollback) - p.scrollOffset
-	if scrollbackEnd < 0 {
-		scrollbackEnd = 0
-	}
-
-	scrollbackStart := scrollbackEnd - rows
-	if scrollbackStart < 0 {
-		scrollbackStart = 0
-	}
-
-	for i := scrollbackStart; i < scrollbackEnd && len(lines) < rows; i++ {
-		lines = append(lines, p.scrollback[i])
-	}
-
-	if len(lines) < rows && scrollbackEnd >= len(p.scrollback) {
-		liveRows := rows - len(lines)
-		_, vtRows := p.vt.Size()
-		for row := 0; row < liveRows && row < vtRows; row++ {
-			var line strings.Builder
-			for col := 0; col < cols; col++ {
-				ch := p.vt.Cell(col, row).Char
-				if ch == 0 {
-					ch = ' '
-				}
-				line.WriteRune(ch)
-			}
-			lines = append(lines, strings.TrimRight(line.String(), " "))
-		}
-	}
-
-	for len(lines) < rows {
-		lines = append(lines, "")
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 // buildANSI constructs ANSI escape sequence for given colors/mode
@@ -727,24 +603,4 @@ func buildCleanEnv() []string {
 	}
 	env = append(env, "TERM=xterm-256color")
 	return env
-}
-
-func stripANSI(s string) string {
-	var result strings.Builder
-	result.Grow(len(s))
-	inEscape := false
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') || s[i] == '~' {
-				inEscape = false
-			}
-			continue
-		}
-		result.WriteByte(s[i])
-	}
-	return result.String()
 }

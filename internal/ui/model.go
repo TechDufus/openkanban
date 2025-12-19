@@ -45,8 +45,6 @@ const (
 	formFieldTitle       = 0
 	formFieldDescription = 1
 	formFieldBranch      = 2
-
-	defaultScrollback = 10000
 )
 
 // Model is the main Bubbletea model
@@ -103,7 +101,6 @@ type Model struct {
 	focusedPane    board.TicketID
 	statusDetector *agent.StatusDetector
 
-	// Settings UI state
 	settingsIndex   int
 	settingsEditing bool
 	settingsInput   textinput.Model
@@ -520,35 +517,6 @@ func (m *Model) handleAgentViewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	pageScrollAmount := m.height - 4
-	if pageScrollAmount < 1 {
-		pageScrollAmount = 10
-	}
-
-	switch msg.Type {
-	case tea.KeyPgUp:
-		pane.ScrollUp(pageScrollAmount)
-		return m, nil
-	case tea.KeyPgDown:
-		pane.ScrollDown(pageScrollAmount)
-		return m, nil
-	case tea.KeyHome:
-		pane.ScrollUp(defaultScrollback)
-		return m, nil
-	case tea.KeyEnd:
-		pane.ScrollToBottom()
-		return m, nil
-	}
-
-	switch msg.String() {
-	case "shift+up":
-		pane.ScrollUp(1)
-		return m, nil
-	case "shift+down":
-		pane.ScrollDown(1)
-		return m, nil
-	}
-
 	if result := pane.HandleKey(msg); result != nil {
 		if _, isExit := result.(terminal.ExitFocusMsg); isExit {
 			m.mode = ModeNormal
@@ -565,13 +533,7 @@ func (m *Model) handleAgentViewMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		pane.ScrollUp(3)
-	case tea.MouseButtonWheelDown:
-		pane.ScrollDown(3)
-	}
-
+	pane.HandleMouse(msg)
 	return m, nil
 }
 
