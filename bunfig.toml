@@ -1,0 +1,8 @@
+[install]
+exact = true
+
+[install.lockfile]
+save = true
+
+[run]
+preload = ["@opentui/solid/preload"]

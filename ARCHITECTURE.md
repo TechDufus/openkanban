@@ -2,246 +2,224 @@
 
 ## System Overview
 
-Agent Board is a TUI application built with Go and Bubbletea that orchestrates AI coding agents across multiple isolated development environments.
+OpenKanban is a TUI application for orchestrating AI coding agents. It uses a **client/server daemon architecture** built with TypeScript and Bun.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Agent Board TUI                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Backlog   │  │ In Progress │  │    Done     │              │
-│  │  ┌───────┐  │  │  ┌───────┐  │  │  ┌───────┐  │              │
-│  │  │Ticket │  │  │  │Ticket │  │  │  │Ticket │  │              │
-│  │  └───────┘  │  │  └───────┘  │  │  └───────┘  │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-└─────────────────────────────────────────────────────────────────┘
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        Core Engine                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ Ticket Store │  │ Git Manager  │  │Terminal Panes│          │
-│  │  (JSON/SQL)  │  │  (worktrees) │  │   (PTY)      │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     System Layer                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  Filesystem  │  │     Git      │  │  PTY/vt10x   │          │
-│  │ (.openkanban) │  │  (worktrees) │  │ (terminals)  │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    OpenKanban Daemon (Server)                     │
+│                     Runs ONCE, survives reconnects                │
+│  ┌──────────────────────────────────────────────────────────────┐│
+│  │                      Core Services                            ││
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ ││
+│  │  │ PTY Manager │ │ Board Store │ │   Agent Orchestrator    │ ││
+│  │  │ Bun.Terminal│ │   (State)   │ │ (Spawn, Monitor, Kill)  │ ││
+│  │  └──────┬──────┘ └──────┬──────┘ └───────────┬─────────────┘ ││
+│  │         └───────────────┼────────────────────┘               ││
+│  └─────────────────────────┼────────────────────────────────────┘│
+│                            ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────┐│
+│  │                    Hono HTTP Server                           ││
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ ││
+│  │  │  REST API   │ │  WebSocket  │ │    Static Files         │ ││
+│  │  │ /api/board  │ │  /ws        │ │    (future web UI)      │ ││
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘ ││
+│  └──────────────────────────┬───────────────────────────────────┘│
+└─────────────────────────────┼────────────────────────────────────┘
+                              │ localhost:4200
+             ┌────────────────┼────────────────┐
+             ▼                ▼                ▼
+        ┌────────┐      ┌──────────┐     ┌────────┐
+        │  TUI   │      │ Desktop  │     │  Web   │
+        │ Client │      │ (Tauri)  │     │ Client │
+        │ (MVP)  │      │ (Future) │     │(Future)│
+        └────────┘      └──────────┘     └────────┘
 ```
 
-## Component Breakdown
+## Why Client/Server?
 
-### 1. TUI Layer (`internal/ui/`)
+| Benefit | Description |
+|---------|-------------|
+| **Run Once** | Daemon process - start it and forget |
+| **Agent Survival** | Agents keep running when TUI closes |
+| **Hot Reload** | Update server code without killing agents |
+| **Auto-Update** | Server can self-update, restart gracefully |
+| **Multi-Client** | TUI + web + desktop can connect simultaneously |
 
-Built with [Bubbletea](https://github.com/charmbracelet/bubbletea) (Elm architecture):
+## Project Structure
 
-```go
-// Model holds all application state
-type Model struct {
-    board      BoardModel      // Kanban columns and tickets
-    focused    FocusState      // What's currently focused
-    dialog     DialogModel     // Modal dialogs (create/edit/confirm)
-    config     *Config         // Application configuration
-    gitMgr     *git.Manager    // Git operations
-    agentMgr   *agent.Manager  // Agent lifecycle
-    store      store.Store     // Persistence
-    width      int             // Terminal width
-    height     int             // Terminal height
+```
+openkanban/
+├── bin/
+│   └── openkanban.ts           # CLI entry point
+├── packages/
+│   ├── shared/                 # Shared types and utilities
+│   │   └── src/
+│   │       ├── types.ts        # Board, Ticket, Column types
+│   │       ├── protocol.ts     # WebSocket message types
+│   │       └── index.ts
+│   ├── server/                 # Daemon server
+│   │   └── src/
+│   │       ├── index.ts        # Entry point
+│   │       ├── daemon.ts       # Daemon lifecycle (PID, signals)
+│   │       └── api/
+│   │           ├── index.ts    # Hono app
+│   │           └── routes/     # REST endpoints
+│   └── tui/                    # TUI client
+│       └── src/
+│           ├── index.tsx       # Entry point
+│           ├── App.tsx         # Root component
+│           └── jsx.d.ts        # OpenTUI type declarations
+├── docs/
+│   └── migration/
+│       └── PLAN.md             # Full migration plan
+├── package.json                # Workspace root
+├── tsconfig.json               # Shared TypeScript config
+└── bunfig.toml                 # Bun configuration
+```
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Runtime | Bun 1.3.5+ |
+| Language | TypeScript (strict mode) |
+| HTTP Server | Hono |
+| TUI Framework | @opentui/core + @opentui/solid |
+| UI Reactivity | SolidJS |
+| PTY | Bun.Terminal (native) |
+| Terminal Emulation | @xterm/headless |
+
+## Package Architecture
+
+### @openkanban/shared
+
+Shared types and WebSocket protocol definitions:
+
+```typescript
+export type TicketStatus = "backlog" | "in_progress" | "done" | "archived"
+export type AgentStatus = "none" | "idle" | "working" | "waiting" | "completed" | "error"
+
+export interface Ticket {
+  id: string
+  title: string
+  status: TicketStatus
+  agentStatus: AgentStatus
+  // ...
 }
 
-// Update handles all messages (Elm architecture)
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    switch msg := msg.(type) {
-    case tea.KeyMsg:
-        return m.handleKeypress(msg)
-    case tea.WindowSizeMsg:
-        return m.handleResize(msg)
-    case AgentStatusMsg:
-        return m.handleAgentStatus(msg)
-    // ...
-    }
+export interface Board {
+  id: string
+  name: string
+  columns: Column[]
+  tickets: Ticket[]
+  settings: BoardSettings
 }
 ```
 
-**Components:**
+### @openkanban/server
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `App` | `app.go` | Root model, message routing |
-| `Board` | `board.go` | Columns, ticket layout |
-| `Ticket` | `ticket.go` | Single ticket card rendering |
-| `Dialog` | `dialog.go` | Modal dialogs (create, edit, confirm) |
-| `Help` | `help.go` | Help overlay |
-| `Styles` | `styles.go` | Lipgloss styles (Catppuccin theme) |
+Daemon server with Hono HTTP/WebSocket:
 
-### 2. Core Layer (`internal/core/`)
-
-Business logic, decoupled from UI:
-
-```go
-// Ticket represents a single task
-type Ticket struct {
-    ID          string    `json:"id"`
-    Title       string    `json:"title"`
-    Slug        string    `json:"slug"`
-    Description string    `json:"description,omitempty"`
-    Status      Status    `json:"status"`
-    Agent       string    `json:"agent,omitempty"`
-    Worktree    string    `json:"worktree,omitempty"`
-    Branch      string    `json:"branch,omitempty"`
-    CreatedAt   time.Time `json:"created_at"`
-    UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// Status represents ticket state
-type Status string
-
-const (
-    StatusBacklog    Status = "backlog"
-    StatusInProgress Status = "in_progress"
-    StatusReview     Status = "review"
-    StatusDone       Status = "done"
-)
-
-// Board manages collections of tickets
-type Board struct {
-    Columns []Column
-    Tickets map[string]*Ticket
-}
-```
-
-### 3. Git Layer (`internal/git/`)
-
-Manages worktrees for isolated development:
-
-```go
-type Manager struct {
-    repoRoot    string  // Root of main repository
-    worktreeDir string  // Where worktrees live (.worktrees/)
-}
-
-// CreateWorktree creates an isolated worktree for a ticket
-func (m *Manager) CreateWorktree(ticket *core.Ticket) error {
-    // 1. Create branch: task/ticket-slug
-    branch := fmt.Sprintf("task/%s", ticket.Slug)
-    if err := m.createBranch(branch); err != nil {
-        return err
+```typescript
+export class Daemon {
+  private server?: ReturnType<typeof Bun.serve>
+  
+  async start(port = 4200): Promise<void> {
+    // Single instance enforcement via PID file
+    if (this.isAlreadyRunning()) {
+      throw new Error("Daemon already running")
     }
     
-    // 2. Create worktree directory
-    worktreePath := filepath.Join(m.worktreeDir, ticket.Slug)
-    cmd := exec.Command("git", "worktree", "add", worktreePath, branch)
-    return cmd.Run()
-}
-
-// RemoveWorktree cleans up a ticket's worktree
-func (m *Manager) RemoveWorktree(ticket *core.Ticket) error {
-    cmd := exec.Command("git", "worktree", "remove", ticket.Worktree)
-    return cmd.Run()
-}
-```
-
-### 4. Terminal Layer (`internal/terminal/`)
-
-Embedded PTY-based terminal panes using `creack/pty` and `hinshun/vt10x`:
-
-```go
-// Pane represents an embedded terminal running an agent
-type Pane struct {
-	id      string
-	pty     *os.File
-	vt      *vt10x.VT
-	cmd     *exec.Cmd
-	workdir string
-	width   int
-	height  int
-}
-
-// Start launches a command in the PTY
-func (p *Pane) Start(command string, args ...string) tea.Cmd {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = p.workdir
-	
-	pty, err := pty.Start(cmd)
-	if err != nil {
-		return nil
-	}
-	p.pty = pty
-	p.cmd = cmd
-	
-	// Start reading output and updating vt10x terminal
-	go p.readLoop()
-	return p.tick()
-}
-
-// HandleKey forwards keyboard input to the PTY
-func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
-	// Convert to escape sequence and write to PTY
-	p.pty.Write(keyToBytes(msg))
-	return nil
-}
-
-// View renders the terminal content from vt10x
-func (p *Pane) View() string {
-	return renderVT(p.vt, p.width, p.height)
+    // Start Hono server
+    this.server = Bun.serve({
+      port,
+      fetch: app.fetch,
+      websocket: { /* handlers */ },
+    })
+    
+    // Signal handlers for graceful shutdown
+    process.on("SIGTERM", () => this.shutdown())
+    process.on("SIGINT", () => this.shutdown())
+  }
 }
 ```
 
-### 5. Agent Layer (`internal/agent/`)
+### @openkanban/tui
 
-Agent configuration and status polling (lifecycle managed by Terminal layer):
+TUI client using OpenTUI + SolidJS:
 
-```go
-type Manager struct {
-	config *config.Config
-}
-
-// GetAgentConfig returns config for an agent type
-func (m *Manager) GetAgentConfig(agentType string) (*config.AgentConfig, bool) {
-	cfg, ok := m.config.Agents[agentType]
-	return &cfg, ok
-}
-
-// StatusPollInterval returns the configured polling interval
-func (m *Manager) StatusPollInterval() time.Duration {
-	return time.Duration(m.config.UI.RefreshInterval) * time.Second
-}
-```
-
-### 5. Store Layer (`internal/store/`)
-
-Persistence abstraction:
-
-```go
-type Store interface {
-    Load() (*core.Board, error)
-    Save(board *core.Board) error
-    Close() error
-}
-
-// JSONStore implements Store with JSON file persistence
-type JSONStore struct {
-    path string
-}
-
-func (s *JSONStore) Load() (*core.Board, error) {
-    data, err := os.ReadFile(s.path)
-    if os.IsNotExist(err) {
-        return core.NewBoard(), nil
+```tsx
+export function App(props: { serverPort: number }) {
+  const [connected, setConnected] = createSignal(false)
+  const [board, setBoard] = createSignal<Board | null>(null)
+  
+  // WebSocket connection with auto-reconnect
+  onMount(() => {
+    const ws = new WebSocket(`ws://localhost:${props.serverPort}/ws`)
+    ws.onopen = () => {
+      setConnected(true)
+      ws.send(JSON.stringify({ type: "board:subscribe" }))
     }
-    var board core.Board
-    return &board, json.Unmarshal(data, &board)
+    // ...
+  })
+  
+  return (
+    <box flexDirection="column" width="100%" height="100%">
+      <Header connected={connected()} />
+      <BoardView board={board()} />
+      <StatusBar />
+    </box>
+  )
 }
+```
 
-// SQLiteStore implements Store with SQLite (optional, for larger boards)
-type SQLiteStore struct {
-    db *sql.DB
-}
+## WebSocket Protocol
+
+### Client → Server
+
+```typescript
+type ClientMessage =
+  | { type: "terminal:input"; sessionId: string; data: string }
+  | { type: "terminal:resize"; sessionId: string; cols: number; rows: number }
+  | { type: "board:subscribe" }
+  | { type: "ticket:create"; ticket: Partial<Ticket> }
+  | { type: "ticket:move"; ticketId: string; status: TicketStatus }
+  | { type: "agent:spawn"; ticketId: string }
+  | { type: "agent:kill"; ticketId: string }
+```
+
+### Server → Client
+
+```typescript
+type ServerMessage =
+  | { type: "terminal:output"; sessionId: string; data: string }
+  | { type: "board:state"; board: Board }
+  | { type: "ticket:created"; ticket: Ticket }
+  | { type: "ticket:updated"; ticket: Ticket }
+  | { type: "agent:status"; ticketId: string; status: AgentStatus }
+  | { type: "error"; message: string }
+```
+
+## REST API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/health | Health check |
+| GET | /api/board | Get full board state |
+| POST | /api/tickets | Create ticket |
+| PATCH | /api/tickets/:id | Update ticket |
+| DELETE | /api/tickets/:id | Delete ticket |
+| POST | /api/tickets/:id/move | Move ticket to column |
+
+## CLI Commands
+
+```bash
+openkanban                # Start daemon + TUI (default)
+openkanban daemon         # Run daemon only
+openkanban daemon -f      # Run daemon in foreground
+openkanban status         # Show daemon status
+openkanban stop           # Stop the daemon
+openkanban restart        # Restart the daemon
 ```
 
 ## Data Flow
@@ -249,253 +227,115 @@ type SQLiteStore struct {
 ### Creating a Ticket
 
 ```
-User presses 'n'
-       │
-       ▼
-┌──────────────┐
-│ Show Dialog  │ ← Dialog component renders
-└──────────────┘
-       │
-       ▼ (user enters title, presses enter)
-┌──────────────┐
-│ Create Ticket│ ← core.NewTicket(title)
-└──────────────┘
-       │
-       ▼
-┌──────────────┐
-│ Save to Store│ ← store.Save(board)
-└──────────────┘
-       │
-       ▼
-┌──────────────┐
-│ Update Board │ ← Board re-renders with new ticket
-└──────────────┘
+TUI Client                         Server
+    │                                 │
+    │  WS: {type: "ticket:create"}   │
+    │ ─────────────────────────────► │
+    │                                 │ Create ticket
+    │                                 │ Persist to JSON
+    │                                 │
+    │  WS: {type: "ticket:created"}  │
+    │ ◄───────────────────────────── │
+    │                                 │
+    │  Update local state             │
+    │  Re-render board                │
 ```
 
-### Moving Ticket to "In Progress"
+### Spawning an Agent
 
 ```
-User presses 'l' on backlog ticket
-       │
-       ▼
-┌──────────────────┐
-│ Update Status    │ ← ticket.Status = StatusInProgress
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Create Worktree  │ ← git worktree add .worktrees/slug task/slug
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Create PTY Pane  │ ← terminal.New() with PTY
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Start Agent      │ ← pane.Start("opencode") in worktree
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Save State       │ ← store.Save(board)
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Update UI        │ ← Ticket moves to "In Progress" column
-└──────────────────┘
+TUI Client                         Server
+    │                                 │
+    │  WS: {type: "agent:spawn"}     │
+    │ ─────────────────────────────► │
+    │                                 │ Create PTY session
+    │                                 │ Start agent process
+    │                                 │
+    │  WS: {type: "agent:status"}    │
+    │ ◄───────────────────────────── │
+    │                                 │
+    │  WS: {type: "terminal:output"} │
+    │ ◄───────────────────────────── │ (streaming)
+    │                                 │
 ```
 
-### Opening a Ticket
+## Daemon Lifecycle
 
 ```
-User presses 'enter' on ticket
-       │
-       ▼
-┌──────────────────┐
-│ Focus Terminal   │ ← Switch to ModeAgentView
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Show PTY Pane    │ ← Embedded terminal fills screen
-└──────────────────┘
-       │
-       ▼ (user presses Ctrl-O to exit focus)
-┌──────────────────┐
-│ Return to Board  │ ← Switch back to ModeNormal
-└──────────────────┘
-```
-
-## Event System
-
-Bubbletea uses messages for all state changes:
-
-```go
-// Custom messages
-type TicketCreatedMsg struct{ Ticket *core.Ticket }
-type TicketMovedMsg struct{ Ticket *core.Ticket; From, To core.Status }
-type TicketDeletedMsg struct{ ID string }
-type AgentStatusMsg struct{ TicketID string; Status AgentStatus }
-type WorktreeCreatedMsg struct{ TicketID string; Path string }
-type ErrorMsg struct{ Err error }
-
-// Commands that produce messages
-func createTicketCmd(title string) tea.Cmd {
-    return func() tea.Msg {
-        ticket := core.NewTicket(title)
-        return TicketCreatedMsg{Ticket: ticket}
-    }
-}
-
-func pollAgentStatusCmd(ticketID string) tea.Cmd {
-    return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-        status := agentMgr.GetStatus(ticketID)
-        return AgentStatusMsg{TicketID: ticketID, Status: status}
-    })
-}
+┌─────────────────────────────────────────────────────────────────┐
+│                         CLI Entry Point                          │
+│                        openkanban [command]                      │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │  start   │    │  status  │    │   stop   │
+    │ (daemon) │    │  (info)  │    │  (kill)  │
+    └────┬─────┘    └──────────┘    └──────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Is daemon running? (check ~/.openkanban/daemon.pid)              │
+├─────────────────────────────────────────────────────────────────┤
+│  NO  → Start daemon (detached), then connect TUI                 │
+│  YES → Connect TUI to existing daemon                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Configuration
 
+Configuration is stored in `~/.openkanban/config.yaml`:
+
 ```yaml
-# ~/.config/openkanban/config.yaml
+port: 4200
 
-# UI settings
-theme: catppuccin-mocha  # or: catppuccin-latte, nord, dracula
-
-# Columns
-columns:
-  - name: Backlog
-    key: backlog
-    color: "#89b4fa"  # blue
-  - name: In Progress
-    key: in_progress
-    color: "#f9e2af"  # yellow
-    spawn_agent: true  # Auto-spawn when ticket enters
-  - name: Review
-    key: review
-    color: "#cba6f7"  # mauve
-  - name: Done
-    key: done
-    color: "#a6e3a1"  # green
-    cleanup_worktree: false  # Keep worktree on completion
-
-# Git settings
-git:
-  worktree_dir: .worktrees
-  branch_prefix: task/
-  auto_push: false
-
-# Agent settings
 default_agent: opencode
+worktree_base: .worktrees
+base_branch: main
+auto_spawn: false
 
 agents:
   opencode:
     command: opencode
     args: []
-    status_file: .opencode/status.json
   claude:
     command: claude
-    args: ["--dangerously-skip-permissions"]
-    status_file: .claude/status.json
+    args: []
   aider:
     command: aider
     args: ["--yes"]
-
-# UI settings
-ui:
-  theme: catppuccin-mocha
-  refresh_interval: 5
-```
-
-## Error Handling
-
-Errors are surfaced through the message system:
-
-```go
-func (m Model) handleError(err error) (tea.Model, tea.Cmd) {
-    // Log error
-    log.Printf("Error: %v", err)
-    
-    // Show in status bar
-    m.statusMessage = fmt.Sprintf("Error: %v", err)
-    m.statusLevel = StatusError
-    
-    // Clear after 5 seconds
-    return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
-        return ClearStatusMsg{}
-    })
-}
-```
-
-## Testing Strategy
-
-```
-internal/
-├── core/
-│   ├── ticket.go
-│   └── ticket_test.go      # Unit tests for ticket logic
-├── git/
-│   ├── worktree.go
-│   └── worktree_test.go    # Integration tests (needs git)
-├── agent/
-│   ├── manager.go
-│   └── manager_test.go     # Integration tests (needs tmux)
-└── ui/
-    ├── board.go
-    └── board_test.go       # Snapshot tests for rendering
-```
-
-For UI testing, use Bubbletea's testing utilities:
-
-```go
-func TestBoardRender(t *testing.T) {
-    board := NewBoard()
-    board.AddTicket(core.NewTicket("Test ticket"))
-    
-    // Render and compare
-    got := board.View()
-    golden := loadGolden(t, "board_with_ticket.txt")
-    if got != golden {
-        t.Errorf("render mismatch:\n%s", diff(got, golden))
-    }
-}
 ```
 
 ## Future Considerations
 
-### Plugin System
-Allow custom agents via config:
+### Desktop App (Tauri)
 
-```yaml
-agents:
-  custom:
-    command: /path/to/my-agent
-    args: ["--mode", "interactive"]
-    status_command: "pgrep -f my-agent"
+Same server, Tauri frontend instead of TUI:
+
+```
+openkanban daemon &        # Start server
+openkanban-desktop         # Launch Tauri app connecting to localhost:4200
 ```
 
-### Remote Agents
-SSH-based agent spawning for remote development:
+### Web Interface
 
-```yaml
-remotes:
-  dev-server:
-    host: dev.example.com
-    user: developer
-    worktree_dir: ~/worktrees
+Serve static files from the server:
+
+```
+packages/
+└── web/                   # Future web client
+    └── src/
+        └── index.tsx      # SolidJS web app
 ```
 
-### GitHub/GitLab Sync
-Bi-directional sync with issue trackers:
+### Remote Access
+
+Expose server on network for remote control:
 
 ```yaml
-integrations:
-  github:
-    enabled: true
-    repo: owner/repo
-    sync_labels: true
+bind: 0.0.0.0:4200
+auth:
+  enabled: true
+  token: ${OPENKANBAN_TOKEN}
 ```

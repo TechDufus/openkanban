@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    // Type checking
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    
+    // Module resolution
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    
+    // Emit
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    
+    // Paths for workspace packages
+    "baseUrl": ".",
+    "paths": {
+      "@openkanban/shared": ["./packages/shared/src/index.ts"],
+      "@openkanban/shared/*": ["./packages/shared/src/*"],
+      "@openkanban/server": ["./packages/server/src/index.ts"],
+      "@openkanban/server/*": ["./packages/server/src/*"],
+      "@openkanban/tui": ["./packages/tui/src/index.tsx"],
+      "@openkanban/tui/*": ["./packages/tui/src/*"]
+    },
+    
+    // JSX for TUI package
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    
+    // Other
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "packages/*/src/**/*",
+    "bin/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "spike"
+  ]
+}
