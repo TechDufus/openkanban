@@ -25,7 +25,7 @@ func (m *Model) View() string {
 	b.WriteString(m.renderBoard())
 
 	if m.showHelp {
-		return m.renderHelp()
+		return m.renderWithOverlay(b.String(), m.renderHelp())
 	}
 	if m.showConfirm {
 		return m.renderWithOverlay(b.String(), m.renderConfirmDialog())
@@ -69,7 +69,7 @@ func (m *Model) renderHeader() string {
 			workingCount++
 			continue
 		}
-		sessionID := m.getSessionName(ticket)
+		sessionID := m.getAgentSessionID(ticket)
 		status := m.statusDetector.DetectStatus(ticket.AgentType, sessionID, true)
 
 		switch status {
@@ -276,7 +276,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	var effectiveStatus board.AgentStatus
 	if hasPane {
-		sessionID := m.getSessionName(ticket)
+		sessionID := m.getAgentSessionID(ticket)
 		effectiveStatus = m.statusDetector.DetectStatus(ticket.AgentType, sessionID, isRunning)
 
 		if effectiveStatus == board.AgentNone && isRunning {
@@ -484,7 +484,8 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("h/l") + descStyle.Render("   Move between columns  ") + keyStyle.Render("n") + descStyle.Render("       New ticket") + "\n" +
 		"  " + keyStyle.Render("j/k") + descStyle.Render("   Move between tickets  ") + keyStyle.Render("e") + descStyle.Render("       Edit ticket") + "\n" +
 		"  " + keyStyle.Render("g") + descStyle.Render("     Go to first ticket    ") + keyStyle.Render("d") + descStyle.Render("       Delete ticket") + "\n" +
-		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Quick move") + "\n\n" +
+		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Move forward") + "\n" +
+		"  " + keyStyle.Render(" ") + descStyle.Render("                            ") + keyStyle.Render("-") + descStyle.Render("       Move backward") + "\n\n" +
 		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("Agent Scroll") + "\n" +
 		"  " + sep + "\n" +
 		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("PgUp") + descStyle.Render("    Scroll up page") + "\n" +
@@ -580,7 +581,15 @@ func (m *Model) renderTicketForm() string {
 }
 
 func (m *Model) renderWithOverlay(background, overlay string) string {
-	return overlay
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		overlay,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(colorBase),
+	)
 }
 
 func (m *Model) renderSettingsView() string {
