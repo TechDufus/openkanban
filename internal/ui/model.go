@@ -15,6 +15,7 @@ import (
 	"github.com/techdufus/openkanban/internal/agent"
 	"github.com/techdufus/openkanban/internal/board"
 	"github.com/techdufus/openkanban/internal/config"
+	"github.com/techdufus/openkanban/internal/daemon"
 	"github.com/techdufus/openkanban/internal/git"
 	"github.com/techdufus/openkanban/internal/terminal"
 )
@@ -104,6 +105,8 @@ type Model struct {
 	settingsIndex   int
 	settingsEditing bool
 	settingsInput   textinput.Model
+
+	daemonAvailable bool
 }
 
 func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *agent.Manager, worktreeMgr *git.WorktreeManager) *Model {
@@ -153,10 +156,59 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 
 // Init implements tea.Model
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		tickAgentStatus(m.agentMgr.StatusPollInterval()),
 		m.spinner.Tick,
-	)
+	}
+
+	if reconnectCmds := m.reconnectDaemonSessions(); len(reconnectCmds) > 0 {
+		cmds = append(cmds, reconnectCmds...)
+	}
+
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) reconnectDaemonSessions() []tea.Cmd {
+	if !daemon.DaemonAvailable("") {
+		m.daemonAvailable = false
+		return nil
+	}
+	m.daemonAvailable = true
+
+	client := daemon.NewClient("")
+	if err := client.Connect(); err != nil {
+		m.daemonAvailable = false
+		return nil
+	}
+	defer client.Close()
+
+	sessions, err := client.ListSessions()
+	if err != nil || len(sessions) == 0 {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	for _, ticket := range m.board.Tickets {
+		if ticket.Status != board.StatusInProgress {
+			continue
+		}
+		if ticket.WorktreePath == "" {
+			continue
+		}
+
+		sessionID := m.getAgentSessionID(ticket)
+		for _, runningID := range sessions {
+			if runningID == sessionID {
+				pane := terminal.New(string(ticket.ID), m.width, m.height-2)
+				pane.SetWorkdir(ticket.WorktreePath)
+				m.panes[ticket.ID] = pane
+				cmds = append(cmds, pane.AttachDaemon(sessionID))
+				break
+			}
+		}
+	}
+
+	return cmds
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -183,10 +235,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case terminal.OutputMsg, terminal.RenderTickMsg:
-		return m.handleTerminalMsg(msg)
+	case terminal.PaneStartedMsg:
+		pane, ok := m.panes[board.TicketID(msg.PaneID)]
+		if !ok {
+			return m, nil
+		}
+		return m, tea.Batch(
+			pane.WaitForLifecycle(),
+			pane.ScheduleRenderTick(),
+		)
 
-	case terminal.ExitMsg:
+	case terminal.PaneStoppedMsg:
 		delete(m.panes, board.TicketID(msg.PaneID))
 		if m.focusedPane == board.TicketID(msg.PaneID) {
 			m.mode = ModeNormal
@@ -194,6 +253,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notify("Agent exited")
 		}
 		return m, nil
+
+	case terminal.RenderTickMsg:
+		pane, ok := m.panes[board.TicketID(msg.PaneID)]
+		if !ok || !pane.Running() {
+			return m, nil
+		}
+		return m, pane.ScheduleRenderTick()
 
 	case terminal.ExitFocusMsg:
 		m.mode = ModeNormal
@@ -1184,15 +1250,24 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 
 	m.saveBoard()
 
+	m.mode = ModeAgentView
+	m.focusedPane = ticket.ID
+
+	if m.daemonAvailable {
+		sessionID := m.getAgentSessionID(ticket)
+		if isNewSession {
+			m.notify("Starting " + agentType + " (daemon)")
+		} else {
+			m.notify("Resuming " + agentType + " (daemon)")
+		}
+		return m, pane.StartDaemon(sessionID, ticket.WorktreePath, agentCfg.Command, args)
+	}
+
 	if isNewSession {
 		m.notify("Starting " + agentType)
 	} else {
 		m.notify("Resuming " + agentType)
 	}
-
-	m.mode = ModeAgentView
-	m.focusedPane = ticket.ID
-
 	return m, pane.Start(agentCfg.Command, args...)
 }
 
@@ -1334,16 +1409,6 @@ func (m *Model) saveBoard() {
 	if err := m.board.Save(m.boardDir); err != nil {
 		m.notify("Failed to save: " + err.Error())
 	}
-}
-
-func (m *Model) handleTerminalMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	for _, pane := range m.panes {
-		if cmd := pane.Update(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-	return m, tea.Batch(cmds...)
 }
 
 type agentStatusMsg time.Time

@@ -29,6 +29,10 @@ for safe parallel development.`,
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
+		if err := EnsureDaemon(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: daemon not available: %v\n", err)
+		}
+
 		bp := boardPath
 		if bp == "" {
 			cwd, _ := os.Getwd()
