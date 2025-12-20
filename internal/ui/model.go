@@ -307,6 +307,8 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.confirmDeleteTicket()
 	case " ":
 		return m.quickMoveTicket()
+	case "-", "backspace":
+		return m.quickMoveTicketBackward()
 	case "s":
 		return m.spawnAgent()
 	case "S":
@@ -1068,6 +1070,25 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) quickMoveTicketBackward() (tea.Model, tea.Cmd) {
+	ticket := m.selectedTicket()
+	if ticket == nil {
+		return m, nil
+	}
+
+	prevStatus := m.previousStatus(ticket.Status)
+	if prevStatus == ticket.Status {
+		return m, nil
+	}
+
+	m.board.MoveTicket(ticket.ID, prevStatus)
+	m.refreshColumnTickets()
+	m.saveBoard()
+	m.notify("Moved to " + string(prevStatus))
+
+	return m, nil
+}
+
 func (m *Model) setupWorktree(ticket *board.Ticket) error {
 	branchName := m.generateBranchName(ticket)
 	baseBranch, _ := m.worktreeMgr.GetDefaultBranch()
@@ -1272,6 +1293,17 @@ func (m *Model) nextStatus(current board.TicketStatus) board.TicketStatus {
 		return board.StatusInProgress
 	case board.StatusInProgress:
 		return board.StatusDone
+	default:
+		return current
+	}
+}
+
+func (m *Model) previousStatus(current board.TicketStatus) board.TicketStatus {
+	switch current {
+	case board.StatusDone:
+		return board.StatusInProgress
+	case board.StatusInProgress:
+		return board.StatusBacklog
 	default:
 		return current
 	}
