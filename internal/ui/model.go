@@ -237,7 +237,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.titleInput.Blur()
 		return m, nil
 	case "?":
-		if m.mode != ModeAgentView {
+		// Only toggle help in modes where user isn't typing text
+		if m.mode == ModeNormal || m.mode == ModeHelp {
 			m.showHelp = !m.showHelp
 			return m, nil
 		}
@@ -1286,6 +1287,15 @@ func (m *Model) getSessionName(ticket *board.Ticket) string {
 		return ticket.BranchName
 	}
 	return string(ticket.ID)
+}
+
+func (m *Model) getAgentSessionID(ticket *board.Ticket) string {
+	if ticket.AgentType == "opencode" && ticket.WorktreePath != "" {
+		if sessionID := agent.FindOpencodeSession(ticket.WorktreePath); sessionID != "" {
+			return sessionID
+		}
+	}
+	return m.getSessionName(ticket)
 }
 
 func (m *Model) saveBoard() {
