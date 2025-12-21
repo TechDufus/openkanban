@@ -1,9 +1,6 @@
 package board
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -43,15 +40,12 @@ func Slugify(s string, maxLen int) string {
 	return slug
 }
 
-// TicketID is a unique identifier for a ticket
 type TicketID string
 
-// NewTicketID generates a new unique ticket ID
 func NewTicketID() TicketID {
 	return TicketID(uuid.New().String())
 }
 
-// TicketStatus represents the workflow status of a ticket
 type TicketStatus string
 
 const (
@@ -61,7 +55,6 @@ const (
 	StatusArchived   TicketStatus = "archived"
 )
 
-// AgentStatus represents the current state of an AI agent
 type AgentStatus string
 
 const (
@@ -73,40 +66,36 @@ const (
 	AgentError     AgentStatus = "error"
 )
 
-// Ticket represents a unit of work
 type Ticket struct {
 	ID          TicketID     `json:"id"`
+	ProjectID   string       `json:"project_id"`
 	Title       string       `json:"title"`
 	Description string       `json:"description,omitempty"`
 	Status      TicketStatus `json:"status"`
 
-	// Git integration
 	WorktreePath string `json:"worktree_path,omitempty"`
 	BranchName   string `json:"branch_name,omitempty"`
 	BaseBranch   string `json:"base_branch,omitempty"`
 
-	// Agent integration
 	AgentType      string      `json:"agent_type,omitempty"`
 	AgentStatus    AgentStatus `json:"agent_status"`
 	AgentSpawnedAt *time.Time  `json:"agent_spawned_at,omitempty"`
 
-	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
-	// Metadata
 	Labels   []string          `json:"labels,omitempty"`
 	Priority int               `json:"priority,omitempty"`
 	Meta     map[string]string `json:"meta,omitempty"`
 }
 
-// NewTicket creates a new ticket with defaults
-func NewTicket(title string) *Ticket {
+func NewTicket(title, projectID string) *Ticket {
 	now := time.Now()
 	return &Ticket{
 		ID:          NewTicketID(),
+		ProjectID:   projectID,
 		Title:       title,
 		Status:      StatusBacklog,
 		AgentStatus: AgentNone,
@@ -118,7 +107,23 @@ func NewTicket(title string) *Ticket {
 	}
 }
 
-// Column represents a kanban column
+func (t *Ticket) Touch() {
+	t.UpdatedAt = time.Now()
+}
+
+func (t *Ticket) SetStatus(status TicketStatus) {
+	now := time.Now()
+	t.Status = status
+	t.UpdatedAt = now
+
+	switch status {
+	case StatusInProgress:
+		t.StartedAt = &now
+	case StatusDone:
+		t.CompletedAt = &now
+	}
+}
+
 type Column struct {
 	ID     string       `json:"id"`
 	Name   string       `json:"name"`
@@ -127,108 +132,16 @@ type Column struct {
 	Limit  int          `json:"limit"`
 }
 
-// BoardSettings contains board-specific settings
-type BoardSettings struct {
-	DefaultAgent     string `json:"default_agent"`
-	WorktreeBase     string `json:"worktree_base"`
-	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
-	AutoCreateBranch bool   `json:"auto_create_branch"`
-	BranchPrefix     string `json:"branch_prefix"`
-	BranchNaming     string `json:"branch_naming"`   // "template" | "ai" | "prompt"
-	BranchTemplate   string `json:"branch_template"` // e.g., "{prefix}{slug}"
-	SlugMaxLength    int    `json:"slug_max_length"` // default: 40
-}
-
-// Board represents a kanban board
-type Board struct {
-	ID        string               `json:"id"`
-	Name      string               `json:"name"`
-	RepoPath  string               `json:"repo_path"`
-	CreatedAt time.Time            `json:"created_at"`
-	UpdatedAt time.Time            `json:"updated_at"`
-	Columns   []Column             `json:"columns"`
-	Tickets   map[TicketID]*Ticket `json:"tickets"`
-	Settings  BoardSettings        `json:"settings"`
-}
-
-// NewBoard creates a new board with default columns
-func NewBoard(name, repoPath string, settings BoardSettings) *Board {
-	now := time.Now()
-
-	// Default worktree base if not set
-	if settings.WorktreeBase == "" {
-		settings.WorktreeBase = repoPath + "-worktrees"
-	}
-
-	return &Board{
-		ID:        uuid.New().String(),
-		Name:      name,
-		RepoPath:  repoPath,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Columns: []Column{
-			{ID: "backlog", Name: "Backlog", Status: StatusBacklog, Color: "#89b4fa", Limit: 0},
-			{ID: "in-progress", Name: "In Progress", Status: StatusInProgress, Color: "#f9e2af", Limit: 3},
-			{ID: "done", Name: "Done", Status: StatusDone, Color: "#a6e3a1", Limit: 0},
-		},
-		Tickets:  make(map[TicketID]*Ticket),
-		Settings: settings,
+func DefaultColumns() []Column {
+	return []Column{
+		{ID: "backlog", Name: "Backlog", Status: StatusBacklog, Color: "#89b4fa", Limit: 0},
+		{ID: "in-progress", Name: "In Progress", Status: StatusInProgress, Color: "#f9e2af", Limit: 3},
+		{ID: "done", Name: "Done", Status: StatusDone, Color: "#a6e3a1", Limit: 0},
 	}
 }
 
-// GetTicketsByStatus returns all tickets with the given status
-func (b *Board) GetTicketsByStatus(status TicketStatus) []*Ticket {
-	var tickets []*Ticket
-	for _, t := range b.Tickets {
-		if t.Status == status {
-			tickets = append(tickets, t)
-		}
-	}
-	return tickets
-}
-
-// AddTicket adds a ticket to the board
-func (b *Board) AddTicket(t *Ticket) {
-	b.Tickets[t.ID] = t
-	b.UpdatedAt = time.Now()
-}
-
-// MoveTicket changes a ticket's status
-func (b *Board) MoveTicket(id TicketID, newStatus TicketStatus) error {
-	t, ok := b.Tickets[id]
-	if !ok {
-		return ErrTicketNotFound
-	}
-
-	now := time.Now()
-	t.Status = newStatus
-	t.UpdatedAt = now
-
-	switch newStatus {
-	case StatusInProgress:
-		t.StartedAt = &now
-	case StatusDone:
-		t.CompletedAt = &now
-	}
-
-	b.UpdatedAt = now
-	return nil
-}
-
-// DeleteTicket removes a ticket from the board
-func (b *Board) DeleteTicket(id TicketID) error {
-	if _, ok := b.Tickets[id]; !ok {
-		return ErrTicketNotFound
-	}
-	delete(b.Tickets, id)
-	b.UpdatedAt = time.Now()
-	return nil
-}
-
-// Errors
 var (
 	ErrTicketNotFound = &BoardError{Message: "ticket not found"}
-	ErrBoardNotFound  = &BoardError{Message: "board not found"}
 )
 
 type BoardError struct {
@@ -237,44 +150,4 @@ type BoardError struct {
 
 func (e *BoardError) Error() string {
 	return e.Message
-}
-
-// Save writes the board to a JSON file
-func (b *Board) Save(dir string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	path := filepath.Join(dir, b.ID+".json")
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// Atomic write
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-// LoadBoard reads a board from a JSON file
-func LoadBoard(path string) (*Board, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var b Board
-	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, err
-	}
-
-	// Initialize map if nil
-	if b.Tickets == nil {
-		b.Tickets = make(map[TicketID]*Ticket)
-	}
-
-	return &b, nil
 }

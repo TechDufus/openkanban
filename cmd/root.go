@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	cfgFile   string
-	boardPath string
+	cfgFile     string
+	projectPath string
 )
 
 var rootCmd = &cobra.Command{
@@ -29,13 +29,13 @@ for safe parallel development.`,
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
-		bp := boardPath
-		if bp == "" {
+		pp := projectPath
+		if pp == "" {
 			cwd, _ := os.Getwd()
-			bp = cwd
+			pp = cwd
 		}
 
-		return app.Run(cfg, bp)
+		return app.Run(cfg, pp)
 	},
 }
 
@@ -45,7 +45,7 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/openkanban/config.json)")
-	rootCmd.PersistentFlags().StringVarP(&boardPath, "board", "b", "", "board or repository path")
+	rootCmd.PersistentFlags().StringVarP(&projectPath, "project", "p", "", "project or repository path")
 
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(listCmd)
@@ -53,7 +53,7 @@ func init() {
 
 var newCmd = &cobra.Command{
 	Use:   "new [name]",
-	Short: "Create a new board",
+	Short: "Create a new project",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := "default"
@@ -66,7 +66,7 @@ var newCmd = &cobra.Command{
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
-		repoPath := boardPath
+		repoPath := projectPath
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
 		}
@@ -76,19 +76,14 @@ var newCmd = &cobra.Command{
 			return fmt.Errorf("failed to resolve path: %w", err)
 		}
 
-		return app.CreateBoard(cfg, name, repoPath)
+		return app.CreateProject(cfg, name, repoPath)
 	},
 }
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all boards",
+	Short: "List all projects",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(cfgFile)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
-
-		return app.ListBoards(cfg)
+		return app.ListProjects()
 	},
 }

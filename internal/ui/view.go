@@ -25,16 +25,16 @@ func (m *Model) View() string {
 	b.WriteString(m.renderBoard())
 
 	if m.showHelp {
-		return m.renderWithOverlay(b.String(), m.renderHelp())
+		return m.renderWithOverlay(m.renderHelp())
 	}
 	if m.showConfirm {
-		return m.renderWithOverlay(b.String(), m.renderConfirmDialog())
+		return m.renderWithOverlay(m.renderConfirmDialog())
 	}
 	if m.mode == ModeCreateTicket || m.mode == ModeEditTicket {
-		return m.renderWithOverlay(b.String(), m.renderTicketForm())
+		return m.renderWithOverlay(m.renderTicketForm())
 	}
 	if m.mode == ModeSettings {
-		return m.renderWithOverlay(b.String(), m.renderSettingsView())
+		return m.renderWithOverlay(m.renderSettingsView())
 	}
 
 	b.WriteString("\n")
@@ -49,22 +49,33 @@ func (m *Model) renderHeader() string {
 		Bold(true).
 		Render("◈ OpenKanban")
 
-	boardBadge := lipgloss.NewStyle().
-		Foreground(colorBase).
-		Background(colorMauve).
-		Padding(0, 1).
-		Render(m.board.Name)
+	var filterBadge string
+	if m.filterProjectID == "" {
+		filterBadge = lipgloss.NewStyle().
+			Foreground(colorBase).
+			Background(colorMauve).
+			Padding(0, 1).
+			Render("All Projects")
+	} else if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
+		filterBadge = lipgloss.NewStyle().
+			Foreground(colorBase).
+			Background(colorMauve).
+			Padding(0, 1).
+			Render(p.Name)
+	}
 
-	repoPath := dimStyle.Render(m.board.RepoPath)
+	projectCount := len(m.globalStore.Projects())
+	ticketCount := m.globalStore.Count()
+	stats := dimStyle.Render(fmt.Sprintf("%d projects, %d tickets", projectCount, ticketCount))
 
-	left := lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", boardBadge, "  ", repoPath)
+	left := lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", filterBadge, "  ", stats)
 
 	workingCount, waitingCount, idleCount := 0, 0, 0
 	for ticketID, pane := range m.panes {
 		if !pane.Running() {
 			continue
 		}
-		ticket := m.board.Tickets[ticketID]
+		ticket, _ := m.globalStore.Get(ticketID)
 		if ticket == nil {
 			workingCount++
 			continue
@@ -112,7 +123,7 @@ func (m *Model) renderHeader() string {
 	}
 
 	helpStyle := lipgloss.NewStyle().Foreground(colorMuted)
-	help := helpStyle.Render("? help  q quit")
+	help := helpStyle.Render("p filter  ? help  q quit")
 
 	right := help
 	if activity != "" {
@@ -120,9 +131,7 @@ func (m *Model) renderHeader() string {
 	}
 
 	spacing := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if spacing < 0 {
-		spacing = 0
-	}
+	spacing = max(spacing, 0)
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, left, strings.Repeat(" ", spacing), right)
 }
@@ -132,10 +141,7 @@ func (m *Model) renderBoard() string {
 	visibleCols := m.visibleColumnCount(columnWidth)
 
 	startCol := m.scrollOffset
-	endCol := startCol + visibleCols
-	if endCol > len(m.board.Columns) {
-		endCol = len(m.board.Columns)
-	}
+	endCol := min(startCol+visibleCols, len(m.columns))
 
 	numVisible := endCol - startCol
 	baseWidth, remainder := m.distributeWidth(numVisible)
@@ -150,7 +156,7 @@ func (m *Model) renderBoard() string {
 	}
 
 	for i := startCol; i < endCol; i++ {
-		col := m.board.Columns[i]
+		col := m.columns[i]
 		isActive := i == m.activeColumn
 		isLast := i == endCol-1
 		isDragTarget := m.dragging && i == m.dragTargetColumn && i != m.dragSourceColumn
@@ -168,7 +174,7 @@ func (m *Model) renderBoard() string {
 		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, colWidth, isLast, ticketOffset))
 	}
 
-	if endCol < len(m.board.Columns) {
+	if endCol < len(m.columns) {
 		indicator := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#6c7086")).
 			Render("▶")
@@ -204,10 +210,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	headerLine := header + count
 
 	visibleCount := m.visibleTicketCount()
-	endIdx := ticketOffset + visibleCount
-	if endIdx > len(tickets) {
-		endIdx = len(tickets)
-	}
+	endIdx := min(ticketOffset+visibleCount, len(tickets))
 
 	hasMoreAbove := ticketOffset > 0
 	hasMoreBelow := endIdx < len(tickets)
@@ -281,6 +284,19 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 		Foreground(colorMuted).
 		Render(fmt.Sprintf("#%s", string(ticket.ID)[:4]))
 
+	var projectBadge string
+	if m.filterProjectID == "" {
+		if proj := m.globalStore.GetProjectForTicket(ticket); proj != nil {
+			shortName := proj.Name
+			if len(shortName) > 12 {
+				shortName = shortName[:10] + ".."
+			}
+			projectBadge = lipgloss.NewStyle().
+				Foreground(colorTeal).
+				Render("[" + shortName + "]")
+		}
+	}
+
 	var sessionBadge string
 	switch effectiveStatus {
 	case board.AgentWorking:
@@ -308,8 +324,11 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	}
 
 	headerLine := idStr
+	if projectBadge != "" {
+		headerLine = fmt.Sprintf("%s %s", idStr, projectBadge)
+	}
 	if sessionBadge != "" {
-		headerLine = fmt.Sprintf("%s  %s", idStr, sessionBadge)
+		headerLine = fmt.Sprintf("%s  %s", headerLine, sessionBadge)
 	}
 
 	titleStyle := lipgloss.NewStyle().
@@ -429,7 +448,7 @@ func (m *Model) renderStatusBar() string {
 		hintStyle.Render("n") + dimStyle.Render(": new") + sep +
 		hintStyle.Render("e") + dimStyle.Render(": edit") + sep +
 		hintStyle.Render("s") + dimStyle.Render(": spawn") + sep +
-		hintStyle.Render("O") + dimStyle.Render(": settings")
+		hintStyle.Render("p") + dimStyle.Render(": filter")
 
 	notif := ""
 	if m.notification != "" {
@@ -443,9 +462,7 @@ func (m *Model) renderStatusBar() string {
 
 	left := lipgloss.JoinHorizontal(lipgloss.Center, modeStr, sep, hints)
 	spacing := m.width - lipgloss.Width(left) - lipgloss.Width(notif)
-	if spacing < 0 {
-		spacing = 0
-	}
+	spacing = max(spacing, 0)
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, left, strings.Repeat(" ", spacing), notif)
 }
@@ -475,16 +492,12 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("g") + descStyle.Render("     Go to first ticket    ") + keyStyle.Render("d") + descStyle.Render("       Delete ticket") + "\n" +
 		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Move forward") + "\n" +
 		"  " + keyStyle.Render(" ") + descStyle.Render("                            ") + keyStyle.Render("-") + descStyle.Render("       Move backward") + "\n\n" +
-		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("Agent Scroll") + "\n" +
+		"  " + keyStyle.Render("Agent") + "                         " + keyStyle.Render("View") + "\n" +
 		"  " + sep + "\n" +
-		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("PgUp") + descStyle.Render("    Scroll up page") + "\n" +
-		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("PgDn") + descStyle.Render("    Scroll down page") + "\n" +
-		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("Home") + descStyle.Render("    Scroll to top") + "\n" +
-		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view       ") + keyStyle.Render("End") + descStyle.Render("     Scroll to bottom") + "\n\n" +
-		"  " + keyStyle.Render("Other") + "\n" +
-		"  " + sep + "\n" +
-		"  " + keyStyle.Render("O") + descStyle.Render("     Board settings        ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
-		"  " + keyStyle.Render("q") + descStyle.Render("     Quit") + "\n\n" +
+		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("p") + descStyle.Render("       Cycle project filter") + "\n" +
+		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("O") + descStyle.Render("       Settings") + "\n" +
+		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
+		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view       ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n\n" +
 		"  " + dimStyle.Render("Tip: Hold Shift to select text in agent view") + "\n\n" +
 		"  " + dimStyle.Render("Press any key to close")
 
@@ -533,6 +546,7 @@ func (m *Model) renderTicketForm() string {
 	titleLabel := labelStyle
 	descLabel := labelStyle
 	branchLabel := labelStyle
+	projectLabel := labelStyle
 
 	switch m.ticketFormField {
 	case formFieldTitle:
@@ -541,6 +555,8 @@ func (m *Model) renderTicketForm() string {
 		descLabel = activeLabelStyle
 	case formFieldBranch:
 		branchLabel = activeLabelStyle
+	case formFieldProject:
+		projectLabel = activeLabelStyle
 	}
 
 	var branchField string
@@ -551,14 +567,30 @@ func (m *Model) renderTicketForm() string {
 		branchField = m.branchInput.View()
 	}
 
+	var projectField string
+	if m.selectedProject != nil {
+		projectField = lipgloss.NewStyle().Foreground(colorTeal).Render(m.selectedProject.Name)
+		if m.ticketFormField == formFieldProject {
+			projectField += dimStyle.Render(" (Enter to cycle)")
+		}
+	} else {
+		projectField = dimStyle.Render("No project selected")
+	}
+
 	content := titleStyle.Render("◈ "+formTitle) + "\n\n" +
 		"  " + titleLabel.Render("Title:") + "\n" +
 		"  " + m.titleInput.View() + "\n\n" +
 		"  " + descLabel.Render("Description:") + "\n" +
 		"  " + m.descInput.View() + "\n\n" +
 		"  " + branchLabel.Render("Branch:") + "\n" +
-		"  " + branchField + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Switch    ") +
+		"  " + branchField + "\n"
+
+	if !isEdit && len(m.globalStore.Projects()) > 1 {
+		content += "\n  " + projectLabel.Render("Project:") + "\n" +
+			"  " + projectField + "\n"
+	}
+
+	content += "\n  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Switch    ") +
 		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"    ") +
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
 
@@ -569,7 +601,7 @@ func (m *Model) renderTicketForm() string {
 		Render(content)
 }
 
-func (m *Model) renderWithOverlay(background, overlay string) string {
+func (m *Model) renderWithOverlay(overlay string) string {
 	return lipgloss.Place(
 		m.width,
 		m.height,
@@ -597,39 +629,20 @@ func (m *Model) renderSettingsView() string {
 		Bold(true)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("◈ Board Settings"))
+	lines = append(lines, titleStyle.Render("◈ Global Settings"))
 	lines = append(lines, "")
 
 	for i, field := range settingsFields {
 		label := field.label
 		value := ""
 
-		s := &m.board.Settings
 		switch field.key {
-		case "default_agent":
-			value = s.DefaultAgent
-		case "worktree_base":
-			value = s.WorktreeBase
-		case "auto_spawn_agent":
-			if s.AutoSpawnAgent {
-				value = "✓ enabled"
-			} else {
-				value = "○ disabled"
+		case "filter_project":
+			if m.filterProjectID == "" {
+				value = "All Projects"
+			} else if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
+				value = p.Name
 			}
-		case "auto_create_branch":
-			if s.AutoCreateBranch {
-				value = "✓ enabled"
-			} else {
-				value = "○ disabled"
-			}
-		case "branch_prefix":
-			value = s.BranchPrefix
-		case "branch_naming":
-			value = s.BranchNaming
-		case "branch_template":
-			value = s.BranchTemplate
-		case "slug_max_length":
-			value = fmt.Sprintf("%d", s.SlugMaxLength)
 		}
 
 		cursor := "  "
@@ -640,9 +653,6 @@ func (m *Model) renderSettingsView() string {
 			cursor = lipgloss.NewStyle().Foreground(colorMauve).Render("▸ ")
 			lStyle = selectedLabelStyle
 			vStyle = lipgloss.NewStyle().Foreground(colorTeal)
-			if m.settingsEditing {
-				value = m.settingsInput.View()
-			}
 		}
 
 		line := cursor + lStyle.Render(fmt.Sprintf("%-18s", label)) + " " + vStyle.Render(value)
@@ -650,14 +660,8 @@ func (m *Model) renderSettingsView() string {
 	}
 
 	lines = append(lines, "")
-	if m.settingsEditing {
-		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorGreen).Render("[Enter]")+dimStyle.Render(" Save  ")+
-			lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Cancel"))
-	} else {
-		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[j/k]")+dimStyle.Render(" Navigate  ")+
-			lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" Edit  ")+
-			lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Close"))
-	}
+	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter/Space]")+dimStyle.Render(" Cycle  ")+
+		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Close"))
 
 	content := strings.Join(lines, "\n")
 
@@ -676,12 +680,16 @@ func (m *Model) renderAgentView() string {
 
 	var b strings.Builder
 
-	ticket := m.board.Tickets[m.focusedPane]
+	ticket, _ := m.globalStore.Get(m.focusedPane)
 	title := "Agent"
 	agentType := ""
+	projectName := ""
 	if ticket != nil {
 		title = ticket.Title
 		agentType = ticket.AgentType
+		if proj := m.globalStore.GetProjectForTicket(ticket); proj != nil {
+			projectName = proj.Name
+		}
 	}
 
 	titleStyle := lipgloss.NewStyle().
@@ -689,6 +697,15 @@ func (m *Model) renderAgentView() string {
 		Bold(true)
 
 	header := titleStyle.Render("◈ " + title)
+
+	if projectName != "" {
+		projBadge := lipgloss.NewStyle().
+			Foreground(colorBase).
+			Background(colorTeal).
+			Padding(0, 1).
+			Render(projectName)
+		header = header + "  " + projBadge
+	}
 
 	if agentType != "" {
 		agentBadge := lipgloss.NewStyle().
@@ -719,9 +736,7 @@ func (m *Model) renderAgentView() string {
 		keyStyle.Render("Ctrl+g") + dimStyle.Render(" Board")
 
 	spacing := m.width - lipgloss.Width(header) - lipgloss.Width(hints)
-	if spacing < 0 {
-		spacing = 0
-	}
+	spacing = max(spacing, 0)
 
 	b.WriteString(header)
 	b.WriteString(strings.Repeat(" ", spacing))
@@ -734,21 +749,18 @@ func (m *Model) renderAgentView() string {
 }
 
 var (
-	colorBase     = lipgloss.Color("#1e1e2e")
-	colorSurface  = lipgloss.Color("#313244")
-	colorOverlay  = lipgloss.Color("#45475a")
-	colorText     = lipgloss.Color("#cdd6f4")
-	colorSubtext  = lipgloss.Color("#a6adc8")
-	colorMuted    = lipgloss.Color("#6c7086")
-	colorBlue     = lipgloss.Color("#89b4fa")
-	colorGreen    = lipgloss.Color("#a6e3a1")
-	colorYellow   = lipgloss.Color("#f9e2af")
-	colorRed      = lipgloss.Color("#f38ba8")
-	colorMauve    = lipgloss.Color("#cba6f7")
-	colorTeal     = lipgloss.Color("#94e2d5")
-	colorPeach    = lipgloss.Color("#fab387")
-	colorFlamingo = lipgloss.Color("#f2cdcd")
-	colorSky      = lipgloss.Color("#89dceb")
+	colorBase    = lipgloss.Color("#1e1e2e")
+	colorSurface = lipgloss.Color("#313244")
+	colorOverlay = lipgloss.Color("#45475a")
+	colorText    = lipgloss.Color("#cdd6f4")
+	colorSubtext = lipgloss.Color("#a6adc8")
+	colorMuted   = lipgloss.Color("#6c7086")
+	colorBlue    = lipgloss.Color("#89b4fa")
+	colorGreen   = lipgloss.Color("#a6e3a1")
+	colorYellow  = lipgloss.Color("#f9e2af")
+	colorRed     = lipgloss.Color("#f38ba8")
+	colorMauve   = lipgloss.Color("#cba6f7")
+	colorTeal    = lipgloss.Color("#94e2d5")
 )
 
 var (
@@ -798,14 +810,6 @@ var (
 )
 
 var (
-	headerStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Bold(true)
-
-	subtitleStyle = lipgloss.NewStyle().
-			Foreground(colorBlue).
-			Bold(true)
-
 	dimStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
@@ -814,28 +818,4 @@ var (
 			Background(colorBlue).
 			Bold(true).
 			Padding(0, 1)
-
-	notificationStyle = lipgloss.NewStyle().
-				Foreground(colorGreen).
-				Bold(true)
-
-	labelStyle = lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorOverlay).
-			Padding(0, 1)
-
-	agentIdleStyle = lipgloss.NewStyle().
-			Foreground(colorBlue)
-
-	agentWorkingStyle = lipgloss.NewStyle().
-				Foreground(colorYellow)
-
-	agentWaitingStyle = lipgloss.NewStyle().
-				Foreground(colorMauve)
-
-	agentCompletedStyle = lipgloss.NewStyle().
-				Foreground(colorGreen)
-
-	agentErrorStyle = lipgloss.NewStyle().
-			Foreground(colorRed)
 )

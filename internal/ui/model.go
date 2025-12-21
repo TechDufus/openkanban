@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,10 +15,10 @@ import (
 	"github.com/techdufus/openkanban/internal/board"
 	"github.com/techdufus/openkanban/internal/config"
 	"github.com/techdufus/openkanban/internal/git"
+	"github.com/techdufus/openkanban/internal/project"
 	"github.com/techdufus/openkanban/internal/terminal"
 )
 
-// Mode represents the current UI mode
 type Mode string
 
 const (
@@ -38,48 +37,41 @@ const (
 	minColumnWidth = 20
 	columnOverhead = 5
 
-	ticketHeight          = 6
-	columnHeaderHeight    = 3
-	scrollIndicatorHeight = 1
+	ticketHeight       = 6
+	columnHeaderHeight = 3
 
 	formFieldTitle       = 0
 	formFieldDescription = 1
 	formFieldBranch      = 2
+	formFieldProject     = 3
 )
 
-// Model is the main Bubbletea model
 type Model struct {
-	// Configuration
 	config *config.Config
 
-	// Data
-	board    *board.Board
-	boardDir string
+	globalStore     *project.GlobalTicketStore
+	columns         []board.Column
+	filterProjectID string
 
-	// Managers
-	agentMgr    *agent.Manager
-	worktreeMgr *git.WorktreeManager
+	worktreeMgrs map[string]*git.WorktreeManager
+	agentMgr     *agent.Manager
 
-	// UI state
 	mode          Mode
 	activeColumn  int
 	activeTicket  int
 	width         int
 	height        int
 	spinner       spinner.Model
-	scrollOffset  int   // horizontal scroll for columns
-	columnOffsets []int // vertical scroll offset per column
+	scrollOffset  int
+	columnOffsets []int
 
-	// Mouse/drag state
 	dragging         bool
 	dragSourceColumn int
 	dragSourceTicket int
 	dragTargetColumn int
 
-	// Cached column tickets
 	columnTickets [][]*board.Ticket
 
-	// Overlay state
 	showHelp    bool
 	showConfirm bool
 	confirmMsg  string
@@ -88,15 +80,15 @@ type Model struct {
 	titleInput      textinput.Model
 	descInput       textarea.Model
 	branchInput     textinput.Model
+	projectInput    textinput.Model
 	ticketFormField int
 	editingTicketID board.TicketID
 	branchLocked    bool
+	selectedProject *project.Project
 
-	// Error/notification
 	notification string
 	notifyTime   time.Time
 
-	// Terminal panes for embedded agent sessions
 	panes          map[board.TicketID]*terminal.Pane
 	focusedPane    board.TicketID
 	statusDetector *agent.StatusDetector
@@ -106,7 +98,7 @@ type Model struct {
 	settingsInput   textinput.Model
 }
 
-func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *agent.Manager, worktreeMgr *git.WorktreeManager) *Model {
+func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, filterProjectID string) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "Enter ticket title..."
 	ti.CharLimit = 100
@@ -124,6 +116,11 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 	bi.CharLimit = 100
 	bi.Width = 40
 
+	pi := textinput.New()
+	pi.Placeholder = "Select project..."
+	pi.CharLimit = 100
+	pi.Width = 40
+
 	si := textinput.New()
 	si.CharLimit = 200
 	si.Width = 40
@@ -132,26 +129,44 @@ func NewModel(cfg *config.Config, b *board.Board, boardDir string, agentMgr *age
 	sp.Spinner = spinner.Meter
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1"))
 
+	worktreeMgrs := make(map[string]*git.WorktreeManager)
+	for _, p := range globalStore.Projects() {
+		worktreeMgrs[p.ID] = git.NewWorktreeManager(p)
+	}
+
+	var selectedProject *project.Project
+	projects := globalStore.Projects()
+	if len(projects) > 0 {
+		if filterProjectID != "" {
+			selectedProject = globalStore.GetProject(filterProjectID)
+		}
+		if selectedProject == nil {
+			selectedProject = projects[0]
+		}
+	}
+
 	m := &Model{
-		config:         cfg,
-		board:          b,
-		boardDir:       boardDir,
-		agentMgr:       agentMgr,
-		worktreeMgr:    worktreeMgr,
-		mode:           ModeNormal,
-		titleInput:     ti,
-		descInput:      di,
-		branchInput:    bi,
-		settingsInput:  si,
-		spinner:        sp,
-		panes:          make(map[board.TicketID]*terminal.Pane),
-		statusDetector: agent.NewStatusDetector(),
+		config:          cfg,
+		globalStore:     globalStore,
+		columns:         board.DefaultColumns(),
+		filterProjectID: filterProjectID,
+		worktreeMgrs:    worktreeMgrs,
+		agentMgr:        agentMgr,
+		mode:            ModeNormal,
+		titleInput:      ti,
+		descInput:       di,
+		branchInput:     bi,
+		projectInput:    pi,
+		settingsInput:   si,
+		spinner:         sp,
+		panes:           make(map[board.TicketID]*terminal.Pane),
+		statusDetector:  agent.NewStatusDetector(),
+		selectedProject: selectedProject,
 	}
 	m.refreshColumnTickets()
 	return m
 }
 
-// Init implements tea.Model
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickAgentStatus(m.agentMgr.StatusPollInterval()),
@@ -208,7 +223,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentStatusResultMsg:
 		for ticketID, status := range msg {
-			if ticket := m.board.Tickets[ticketID]; ticket != nil {
+			if ticket, _ := m.globalStore.Get(ticketID); ticket != nil {
 				ticket.AgentStatus = status
 			}
 		}
@@ -228,9 +243,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey processes keyboard input
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Global keys
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.mode == ModeNormal {
@@ -246,16 +259,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.titleInput.Blur()
 		return m, nil
 	case "?":
-		// Only toggle help in modes where user isn't typing text
 		if m.mode == ModeNormal || m.mode == ModeHelp {
 			m.showHelp = !m.showHelp
 			return m, nil
 		}
 	}
 
-	// Mode-specific handling
 	if m.showHelp {
-		// Any key closes help
 		m.showHelp = false
 		return m, nil
 	}
@@ -282,10 +292,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleNormalMode processes keys in normal mode
 func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	// Navigation
 	case "h", "left":
 		m.moveColumn(-1)
 	case "l", "right":
@@ -299,10 +307,7 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureTicketVisible()
 	case "G":
 		if len(m.columnTickets) > m.activeColumn {
-			m.activeTicket = len(m.columnTickets[m.activeColumn]) - 1
-			if m.activeTicket < 0 {
-				m.activeTicket = 0
-			}
+			m.activeTicket = max(len(m.columnTickets[m.activeColumn])-1, 0)
 		}
 		m.ensureTicketVisible()
 
@@ -323,11 +328,12 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "S":
 		return m.stopAgent()
 
-	// Command mode
 	case ":":
 		m.mode = ModeCommand
 
-	// Settings
+	case "p":
+		m.cycleProjectFilter()
+
 	case "O":
 		m.mode = ModeSettings
 		m.settingsIndex = 0
@@ -337,7 +343,43 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse processes mouse events
+func (m *Model) cycleProjectFilter() {
+	projects := m.globalStore.Projects()
+	if len(projects) == 0 {
+		return
+	}
+
+	if m.filterProjectID == "" {
+		m.filterProjectID = projects[0].ID
+	} else {
+		found := false
+		for i, p := range projects {
+			if p.ID == m.filterProjectID {
+				if i+1 < len(projects) {
+					m.filterProjectID = projects[i+1].ID
+				} else {
+					m.filterProjectID = ""
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.filterProjectID = ""
+		}
+	}
+
+	m.refreshColumnTickets()
+
+	if m.filterProjectID == "" {
+		m.notify("Showing all projects")
+	} else {
+		if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
+			m.notify("Filtering: " + p.Name)
+		}
+	}
+}
+
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Action {
 	case tea.MouseActionPress:
@@ -385,9 +427,8 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// hitTest returns column and ticket indices at screen position, or -1 if not found
 func (m *Model) hitTest(x, y int) (column, ticket int) {
-	if m.width == 0 || len(m.board.Columns) == 0 {
+	if m.width == 0 || len(m.columns) == 0 {
 		return -1, -1
 	}
 
@@ -399,8 +440,8 @@ func (m *Model) hitTest(x, y int) (column, ticket int) {
 	columnWidth := m.calcColumnWidth()
 	visibleCols := m.visibleColumnCount(columnWidth)
 	numVisible := visibleCols
-	if m.scrollOffset+visibleCols > len(m.board.Columns) {
-		numVisible = len(m.board.Columns) - m.scrollOffset
+	if m.scrollOffset+visibleCols > len(m.columns) {
+		numVisible = len(m.columns) - m.scrollOffset
 	}
 
 	baseWidth, remainder := m.distributeWidth(numVisible)
@@ -469,7 +510,7 @@ func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
 	}
 
 	ticket := tickets[m.dragSourceTicket]
-	targetStatus := m.board.Columns[m.dragTargetColumn].Status
+	targetStatus := m.columns[m.dragTargetColumn].Status
 
 	if targetStatus == board.StatusInProgress && ticket.WorktreePath == "" {
 		if err := m.setupWorktree(ticket); err != nil {
@@ -479,9 +520,9 @@ func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.board.MoveTicket(ticket.ID, targetStatus)
+	m.globalStore.Move(ticket.ID, targetStatus)
 	m.refreshColumnTickets()
-	m.saveBoard()
+	m.saveTicket(ticket)
 
 	m.activeColumn = m.dragTargetColumn
 	m.activeTicket = 0
@@ -495,11 +536,9 @@ func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleCommandMode processes keys in command mode
 func (m *Model) handleCommandMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		// Execute command
 		m.mode = ModeNormal
 	case "esc":
 		m.mode = ModeNormal
@@ -507,7 +546,6 @@ func (m *Model) handleCommandMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleConfirm processes keys in confirm dialog
 func (m *Model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
@@ -560,9 +598,9 @@ func (m *Model) handleEditTicketMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "tab":
-		return m.nextFormField(), nil
+		return m.nextFormField(isEdit), nil
 	case "shift+tab":
-		return m.prevFormField(), nil
+		return m.prevFormField(isEdit), nil
 
 	case "ctrl+s", "ctrl+enter":
 		return m.saveTicketForm(isEdit)
@@ -570,6 +608,10 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 	case "enter":
 		if m.ticketFormField == formFieldTitle {
 			return m.saveTicketForm(isEdit)
+		}
+		if m.ticketFormField == formFieldProject && !isEdit {
+			m.cycleSelectedProject()
+			return m, nil
 		}
 
 	case "esc":
@@ -590,31 +632,77 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		if !m.branchLocked {
 			m.branchInput, cmd = m.branchInput.Update(msg)
 		}
+	case formFieldProject:
+		if msg.String() == " " || msg.String() == "enter" {
+			m.cycleSelectedProject()
+		}
 	}
 	return m, cmd
 }
 
-func (m *Model) nextFormField() *Model {
+func (m *Model) cycleSelectedProject() {
+	projects := m.globalStore.Projects()
+	if len(projects) == 0 {
+		return
+	}
+
+	if m.selectedProject == nil {
+		m.selectedProject = projects[0]
+		return
+	}
+
+	for i, p := range projects {
+		if p.ID == m.selectedProject.ID {
+			if i+1 < len(projects) {
+				m.selectedProject = projects[i+1]
+			} else {
+				m.selectedProject = projects[0]
+			}
+			return
+		}
+	}
+	m.selectedProject = projects[0]
+}
+
+func (m *Model) nextFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField++
-	if m.ticketFormField > formFieldBranch {
+
+	maxField := formFieldBranch
+	if !isEdit && len(m.globalStore.Projects()) > 1 {
+		maxField = formFieldProject
+	}
+
+	if m.ticketFormField > maxField {
 		m.ticketFormField = formFieldTitle
 	}
 	if m.ticketFormField == formFieldBranch && m.branchLocked {
-		m.ticketFormField = formFieldTitle
+		m.ticketFormField++
+		if m.ticketFormField > maxField {
+			m.ticketFormField = formFieldTitle
+		}
 	}
 	m.focusCurrentField()
 	return m
 }
 
-func (m *Model) prevFormField() *Model {
+func (m *Model) prevFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField--
+
+	maxField := formFieldBranch
+	if !isEdit && len(m.globalStore.Projects()) > 1 {
+		maxField = formFieldProject
+	}
+
 	if m.ticketFormField < formFieldTitle {
-		m.ticketFormField = formFieldBranch
+		m.ticketFormField = maxField
 	}
 	if m.ticketFormField == formFieldBranch && m.branchLocked {
-		m.ticketFormField = formFieldDescription
+		m.ticketFormField--
+		if m.ticketFormField < formFieldTitle {
+			m.ticketFormField = maxField
+		}
 	}
 	m.focusCurrentField()
 	return m
@@ -624,6 +712,7 @@ func (m *Model) blurAllFormFields() {
 	m.titleInput.Blur()
 	m.descInput.Blur()
 	m.branchInput.Blur()
+	m.projectInput.Blur()
 }
 
 func (m *Model) focusCurrentField() {
@@ -634,6 +723,8 @@ func (m *Model) focusCurrentField() {
 		m.descInput.Focus()
 	case formFieldBranch:
 		m.branchInput.Focus()
+	case formFieldProject:
+		m.projectInput.Focus()
 	}
 }
 
@@ -644,33 +735,38 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.selectedProject == nil {
+		m.notify("No project selected")
+		return m, nil
+	}
+
 	desc := strings.TrimSpace(m.descInput.Value())
 	branchName := strings.TrimSpace(m.branchInput.Value())
 	if branchName == "" {
-		branchName = m.generateBranchNameFromTitle(title)
+		branchName = m.generateBranchNameFromTitle(title, m.selectedProject)
 	}
 
 	if isEdit && m.editingTicketID != "" {
-		ticket := m.board.Tickets[m.editingTicketID]
+		ticket, _ := m.globalStore.Get(m.editingTicketID)
 		if ticket != nil {
 			ticket.Title = title
 			ticket.Description = desc
 			if !m.branchLocked {
 				ticket.BranchName = branchName
 			}
-			ticket.UpdatedAt = time.Now()
-			m.saveBoard()
+			ticket.Touch()
+			m.saveTicket(ticket)
 			m.refreshColumnTickets()
 			m.notify("Updated: " + title)
 		}
 	} else {
-		ticket := board.NewTicket(title)
+		ticket := board.NewTicket(title, m.selectedProject.ID)
 		ticket.Description = desc
 		ticket.BranchName = branchName
-		ticket.Status = m.board.Columns[m.activeColumn].Status
-		m.board.AddTicket(ticket)
+		ticket.Status = m.columns[m.activeColumn].Status
+		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
-		m.saveBoard()
+		m.saveTicket(ticket)
 		m.notify("Created: " + title)
 	}
 
@@ -688,14 +784,7 @@ type settingsField struct {
 }
 
 var settingsFields = []settingsField{
-	{"default_agent", "Default Agent", "string"},
-	{"worktree_base", "Worktree Base", "string"},
-	{"auto_spawn_agent", "Auto Spawn Agent", "bool"},
-	{"auto_create_branch", "Auto Create Branch", "bool"},
-	{"branch_prefix", "Branch Prefix", "string"},
-	{"branch_naming", "Branch Naming", "string"},
-	{"branch_template", "Branch Template", "string"},
-	{"slug_max_length", "Slug Max Length", "int"},
+	{"filter_project", "Filter Project", "project"},
 }
 
 func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -711,9 +800,7 @@ func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "k", "up":
 		m.settingsIndex--
-		if m.settingsIndex < 0 {
-			m.settingsIndex = 0
-		}
+		m.settingsIndex = max(m.settingsIndex, 0)
 	case "enter", " ":
 		return m.enterSettingsEdit()
 	case "esc", "q":
@@ -725,12 +812,17 @@ func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleSettingsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	field := settingsFields[m.settingsIndex]
 
+	if field.kind == "project" {
+		m.cycleProjectFilter()
+		m.settingsEditing = false
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "enter":
 		m.applySettingsValue(field.key, m.settingsInput.Value())
 		m.settingsEditing = false
 		m.settingsInput.Blur()
-		m.saveBoard()
 		m.notify("Settings saved")
 		return m, nil
 	case "esc":
@@ -746,17 +838,9 @@ func (m *Model) handleSettingsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 	field := settingsFields[m.settingsIndex]
-	s := &m.board.Settings
 
-	if field.kind == "bool" {
-		switch field.key {
-		case "auto_spawn_agent":
-			s.AutoSpawnAgent = !s.AutoSpawnAgent
-		case "auto_create_branch":
-			s.AutoCreateBranch = !s.AutoCreateBranch
-		}
-		m.saveBoard()
-		m.notify("Setting toggled")
+	if field.kind == "project" {
+		m.cycleProjectFilter()
 		return m, nil
 	}
 
@@ -767,51 +851,26 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) getSettingsValue(key string) string {
-	s := &m.board.Settings
 	switch key {
-	case "default_agent":
-		return s.DefaultAgent
-	case "worktree_base":
-		return s.WorktreeBase
-	case "branch_prefix":
-		return s.BranchPrefix
-	case "branch_naming":
-		return s.BranchNaming
-	case "branch_template":
-		return s.BranchTemplate
-	case "slug_max_length":
-		return fmt.Sprintf("%d", s.SlugMaxLength)
+	case "filter_project":
+		if m.filterProjectID == "" {
+			return "All Projects"
+		}
+		if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
+			return p.Name
+		}
 	}
 	return ""
 }
 
 func (m *Model) applySettingsValue(key, value string) {
-	s := &m.board.Settings
-	switch key {
-	case "default_agent":
-		s.DefaultAgent = value
-	case "worktree_base":
-		s.WorktreeBase = value
-	case "branch_prefix":
-		s.BranchPrefix = value
-	case "branch_naming":
-		s.BranchNaming = value
-	case "branch_template":
-		s.BranchTemplate = value
-	case "slug_max_length":
-		if n, err := strconv.Atoi(value); err == nil && n > 0 {
-			s.SlugMaxLength = n
-		}
-	}
 }
 
 func (m *Model) moveColumn(delta int) {
 	m.activeColumn += delta
-	if m.activeColumn < 0 {
-		m.activeColumn = 0
-	}
-	if m.activeColumn >= len(m.board.Columns) {
-		m.activeColumn = len(m.board.Columns) - 1
+	m.activeColumn = max(m.activeColumn, 0)
+	if m.activeColumn >= len(m.columns) {
+		m.activeColumn = len(m.columns) - 1
 	}
 	m.activeTicket = 0
 	m.ensureColumnVisible()
@@ -828,40 +887,32 @@ func (m *Model) ensureColumnVisible() {
 		m.scrollOffset = m.activeColumn - visibleCols + 1
 	}
 
-	maxOffset := len(m.board.Columns) - visibleCols
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+	maxOffset := max(len(m.columns)-visibleCols, 0)
 	if m.scrollOffset > maxOffset {
 		m.scrollOffset = maxOffset
 	}
 }
 
 func (m *Model) calcColumnWidth() int {
-	if m.width == 0 || len(m.board.Columns) == 0 {
+	if m.width == 0 || len(m.columns) == 0 {
 		return minColumnWidth
 	}
 
-	numCols := len(m.board.Columns)
+	numCols := len(m.columns)
 	totalOverhead := numCols * columnOverhead
 	colWidth := (m.width - totalOverhead) / numCols
 
-	if colWidth < minColumnWidth {
-		colWidth = minColumnWidth
-	}
-	return colWidth
+	return max(colWidth, minColumnWidth)
 }
 
 func (m *Model) visibleColumnCount(colWidth int) int {
 	if m.width == 0 {
-		return len(m.board.Columns)
+		return len(m.columns)
 	}
 	visible := m.width / (colWidth + columnOverhead)
-	if visible < 1 {
-		visible = 1
-	}
-	if visible > len(m.board.Columns) {
-		visible = len(m.board.Columns)
+	visible = max(visible, 1)
+	if visible > len(m.columns) {
+		visible = len(m.columns)
 	}
 	return visible
 }
@@ -870,7 +921,6 @@ func (m *Model) distributeWidth(numCols int) (baseWidth, remainder int) {
 	if numCols == 0 || m.width == 0 {
 		return minColumnWidth, 0
 	}
-	// lipgloss Width() includes padding, so only border (2) and margin (1) are outside
 	borders := numCols * 2
 	margins := numCols - 1
 	available := m.width - borders - margins
@@ -889,14 +939,9 @@ func (m *Model) moveTicket(delta int) {
 	}
 	tickets := m.columnTickets[m.activeColumn]
 	m.activeTicket += delta
-	if m.activeTicket < 0 {
-		m.activeTicket = 0
-	}
+	m.activeTicket = max(m.activeTicket, 0)
 	if m.activeTicket >= len(tickets) {
-		m.activeTicket = len(tickets) - 1
-		if m.activeTicket < 0 {
-			m.activeTicket = 0
-		}
+		m.activeTicket = max(len(tickets)-1, 0)
 	}
 	m.ensureTicketVisible()
 }
@@ -907,10 +952,7 @@ func (m *Model) visibleTicketCount() int {
 		return 1
 	}
 	count := availableHeight / ticketHeight
-	if count < 1 {
-		count = 1
-	}
-	return count
+	return max(count, 1)
 }
 
 func (m *Model) columnContentHeight() int {
@@ -933,9 +975,7 @@ func (m *Model) ensureTicketVisible() {
 		m.columnOffsets[m.activeColumn] = m.activeTicket - visible + 1
 	}
 
-	if m.columnOffsets[m.activeColumn] < 0 {
-		m.columnOffsets[m.activeColumn] = 0
-	}
+	m.columnOffsets[m.activeColumn] = max(m.columnOffsets[m.activeColumn], 0)
 }
 
 func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
@@ -943,6 +983,16 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.ticketFormField = formFieldTitle
 	m.editingTicketID = ""
 	m.branchLocked = false
+
+	if m.filterProjectID != "" {
+		m.selectedProject = m.globalStore.GetProject(m.filterProjectID)
+	} else if m.selectedProject == nil {
+		projects := m.globalStore.Projects()
+		if len(projects) > 0 {
+			m.selectedProject = projects[0]
+		}
+	}
+
 	m.titleInput.Reset()
 	m.descInput.Reset()
 	m.branchInput.Reset()
@@ -962,12 +1012,13 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 	m.ticketFormField = formFieldTitle
 	m.editingTicketID = ticket.ID
 	m.branchLocked = ticket.WorktreePath != ""
+	m.selectedProject = m.globalStore.GetProjectForTicket(ticket)
 	m.titleInput.SetValue(ticket.Title)
 	m.descInput.SetValue(ticket.Description)
 	if ticket.BranchName != "" {
 		m.branchInput.SetValue(ticket.BranchName)
-	} else {
-		m.branchInput.SetValue(m.generateBranchNameFromTitle(ticket.Title))
+	} else if m.selectedProject != nil {
+		m.branchInput.SetValue(m.generateBranchNameFromTitle(ticket.Title, m.selectedProject))
 	}
 	m.blurAllFormFields()
 	m.titleInput.Focus()
@@ -1000,12 +1051,15 @@ func (m *Model) confirmDeleteTicket() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	proj := m.globalStore.GetProjectForTicket(ticket)
 	hasUncommitted := false
-	if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
-		var err error
-		hasUncommitted, err = m.worktreeMgr.HasUncommittedChanges(ticket.WorktreePath)
-		if err != nil {
-			hasUncommitted = false
+	if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree && proj != nil {
+		if mgr := m.worktreeMgrs[proj.ID]; mgr != nil {
+			var err error
+			hasUncommitted, err = mgr.HasUncommittedChanges(ticket.WorktreePath)
+			if err != nil {
+				hasUncommitted = false
+			}
 		}
 	}
 
@@ -1013,43 +1067,49 @@ func (m *Model) confirmDeleteTicket() (tea.Model, tea.Cmd) {
 		m.showConfirm = true
 		m.confirmMsg = "Worktree has uncommitted changes. Force delete?"
 		m.confirmFn = func() tea.Cmd {
-			m.performTicketCleanup(ticket, true)
+			m.performTicketCleanup(ticket)
 			return nil
 		}
 	} else {
 		m.showConfirm = true
 		m.confirmMsg = "Delete ticket: " + ticket.Title + "?"
 		m.confirmFn = func() tea.Cmd {
-			m.performTicketCleanup(ticket, false)
+			m.performTicketCleanup(ticket)
 			return nil
 		}
 	}
 	return m, nil
 }
 
-func (m *Model) performTicketCleanup(ticket *board.Ticket, forceWorktree bool) {
+func (m *Model) performTicketCleanup(ticket *board.Ticket) {
 	if pane, ok := m.panes[ticket.ID]; ok {
 		pane.Stop()
 		delete(m.panes, ticket.ID)
 	}
 
-	if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
-		err := m.worktreeMgr.RemoveWorktree(ticket.WorktreePath)
-		if err != nil {
-			m.notify("Worktree removal failed: " + err.Error())
+	proj := m.globalStore.GetProjectForTicket(ticket)
+	if proj != nil {
+		mgr := m.worktreeMgrs[proj.ID]
+		if mgr != nil {
+			if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
+				err := mgr.RemoveWorktree(ticket.WorktreePath)
+				if err != nil {
+					m.notify("Worktree removal failed: " + err.Error())
+				}
+			}
+
+			if ticket.BranchName != "" && m.config.Cleanup.DeleteBranch {
+				err := mgr.DeleteBranch(ticket.BranchName)
+				if err != nil {
+					m.notify("Branch deletion failed: " + err.Error())
+				}
+			}
 		}
 	}
 
-	if ticket.BranchName != "" && m.config.Cleanup.DeleteBranch {
-		err := m.worktreeMgr.DeleteBranch(ticket.BranchName)
-		if err != nil {
-			m.notify("Branch deletion failed: " + err.Error())
-		}
-	}
-
-	m.board.DeleteTicket(ticket.ID)
+	m.globalStore.Delete(ticket.ID)
 	m.refreshColumnTickets()
-	m.saveBoard()
+	m.globalStore.SaveAll()
 	m.notify("Deleted ticket")
 }
 
@@ -1071,9 +1131,9 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.board.MoveTicket(ticket.ID, nextStatus)
+	m.globalStore.Move(ticket.ID, nextStatus)
 	m.refreshColumnTickets()
-	m.saveBoard()
+	m.saveTicket(ticket)
 	m.notify("Moved to " + string(nextStatus))
 
 	return m, nil
@@ -1090,19 +1150,29 @@ func (m *Model) quickMoveTicketBackward() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.board.MoveTicket(ticket.ID, prevStatus)
+	m.globalStore.Move(ticket.ID, prevStatus)
 	m.refreshColumnTickets()
-	m.saveBoard()
+	m.saveTicket(ticket)
 	m.notify("Moved to " + string(prevStatus))
 
 	return m, nil
 }
 
 func (m *Model) setupWorktree(ticket *board.Ticket) error {
-	branchName := m.generateBranchName(ticket)
-	baseBranch, _ := m.worktreeMgr.GetDefaultBranch()
+	proj := m.globalStore.GetProjectForTicket(ticket)
+	if proj == nil {
+		return fmt.Errorf("project not found for ticket")
+	}
 
-	path, err := m.worktreeMgr.CreateWorktree(branchName, baseBranch)
+	mgr := m.worktreeMgrs[proj.ID]
+	if mgr == nil {
+		return fmt.Errorf("worktree manager not found")
+	}
+
+	branchName := m.generateBranchName(ticket, proj)
+	baseBranch, _ := mgr.GetDefaultBranch()
+
+	path, err := mgr.CreateWorktree(branchName, baseBranch)
 	if err != nil {
 		return err
 	}
@@ -1113,25 +1183,12 @@ func (m *Model) setupWorktree(ticket *board.Ticket) error {
 	return nil
 }
 
-func (m *Model) generateBranchNameFromTitle(title string) string {
-	settings := &m.board.Settings
-
-	maxLen := settings.SlugMaxLength
-	if maxLen <= 0 {
-		maxLen = 40
-	}
-
+func (m *Model) generateBranchNameFromTitle(title string, proj *project.Project) string {
+	maxLen := proj.GetSlugMaxLength()
 	slug := board.Slugify(title, maxLen)
 
-	template := settings.BranchTemplate
-	if template == "" {
-		template = "{prefix}{slug}"
-	}
-
-	prefix := settings.BranchPrefix
-	if prefix == "" {
-		prefix = "task/"
-	}
+	template := proj.GetBranchTemplate()
+	prefix := proj.GetBranchPrefix()
 
 	result := strings.ReplaceAll(template, "{prefix}", prefix)
 	result = strings.ReplaceAll(result, "{slug}", slug)
@@ -1139,11 +1196,11 @@ func (m *Model) generateBranchNameFromTitle(title string) string {
 	return result
 }
 
-func (m *Model) generateBranchName(ticket *board.Ticket) string {
+func (m *Model) generateBranchName(ticket *board.Ticket, proj *project.Project) string {
 	if ticket.BranchName != "" {
 		return ticket.BranchName
 	}
-	return m.generateBranchNameFromTitle(ticket.Title)
+	return m.generateBranchNameFromTitle(ticket.Title, proj)
 }
 
 func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
@@ -1162,6 +1219,12 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	proj := m.globalStore.GetProjectForTicket(ticket)
+	if proj == nil {
+		m.notify("Project not found")
+		return m, nil
+	}
+
 	if ticket.WorktreePath == "" {
 		if err := m.setupWorktree(ticket); err != nil {
 			m.notify("Failed to create worktree: " + err.Error())
@@ -1169,7 +1232,10 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	agentType := m.board.Settings.DefaultAgent
+	agentType := proj.Settings.DefaultAgent
+	if agentType == "" {
+		agentType = m.config.Defaults.DefaultAgent
+	}
 	agentCfg, ok := m.config.Agents[agentType]
 	if !ok {
 		m.notify("Unknown agent: " + agentType)
@@ -1191,7 +1257,7 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		ticket.AgentSpawnedAt = &now
 	}
 
-	m.saveBoard()
+	m.saveTicket(ticket)
 
 	if isNewSession {
 		m.notify("Starting " + agentType)
@@ -1268,12 +1334,11 @@ func (m *Model) stopAgent() (tea.Model, tea.Cmd) {
 	}
 
 	ticket.AgentStatus = board.AgentNone
-	m.saveBoard()
+	m.saveTicket(ticket)
 	m.notify("Agent stopped")
 	return m, nil
 }
 
-// Helper methods
 func (m *Model) selectedTicket() *board.Ticket {
 	if len(m.columnTickets) <= m.activeColumn {
 		return nil
@@ -1286,13 +1351,24 @@ func (m *Model) selectedTicket() *board.Ticket {
 }
 
 func (m *Model) refreshColumnTickets() {
-	m.columnTickets = make([][]*board.Ticket, len(m.board.Columns))
-	for i, col := range m.board.Columns {
-		m.columnTickets[i] = m.board.GetTicketsByStatus(col.Status)
+	m.columnTickets = make([][]*board.Ticket, len(m.columns))
+	for i, col := range m.columns {
+		allForStatus := m.globalStore.GetByStatus(col.Status)
+		if m.filterProjectID != "" {
+			var filtered []*board.Ticket
+			for _, t := range allForStatus {
+				if t.ProjectID == m.filterProjectID {
+					filtered = append(filtered, t)
+				}
+			}
+			m.columnTickets[i] = filtered
+		} else {
+			m.columnTickets[i] = allForStatus
+		}
 	}
 
-	if len(m.columnOffsets) != len(m.board.Columns) {
-		m.columnOffsets = make([]int, len(m.board.Columns))
+	if len(m.columnOffsets) != len(m.columns) {
+		m.columnOffsets = make([]int, len(m.columns))
 	}
 }
 
@@ -1323,24 +1399,8 @@ func (m *Model) notify(msg string) {
 	m.notifyTime = time.Now()
 }
 
-func (m *Model) getSessionName(ticket *board.Ticket) string {
-	if ticket.BranchName != "" {
-		return ticket.BranchName
-	}
-	return string(ticket.ID)
-}
-
-func (m *Model) getAgentSessionID(ticket *board.Ticket) string {
-	if ticket.AgentType == "opencode" && ticket.WorktreePath != "" {
-		if sessionID := agent.FindOpencodeSession(ticket.WorktreePath); sessionID != "" {
-			return sessionID
-		}
-	}
-	return m.getSessionName(ticket)
-}
-
-func (m *Model) saveBoard() {
-	if err := m.board.Save(m.boardDir); err != nil {
+func (m *Model) saveTicket(ticket *board.Ticket) {
+	if err := m.globalStore.Save(ticket); err != nil {
 		m.notify("Failed to save: " + err.Error())
 	}
 }
@@ -1356,7 +1416,7 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 
 	var panes []paneInfo
 	for ticketID, pane := range m.panes {
-		ticket := m.board.Tickets[ticketID]
+		ticket, _ := m.globalStore.Get(ticketID)
 		if ticket == nil {
 			continue
 		}

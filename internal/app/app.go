@@ -7,151 +7,105 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/techdufus/openkanban/internal/agent"
-	"github.com/techdufus/openkanban/internal/board"
 	"github.com/techdufus/openkanban/internal/config"
 	"github.com/techdufus/openkanban/internal/git"
+	"github.com/techdufus/openkanban/internal/project"
 	"github.com/techdufus/openkanban/internal/ui"
 )
 
-// Run starts the TUI application
-func Run(cfg *config.Config, boardPath string) error {
-	// Find or create board
-	b, err := findBoard(cfg, boardPath)
+func Run(cfg *config.Config, filterPath string) error {
+	registry, err := project.LoadRegistry()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to load project registry: %w", err)
 	}
 
-	boardDir, err := boardsDir()
+	globalStore, err := project.LoadGlobalTicketStore(registry)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to load tickets: %w", err)
 	}
 
-	// Initialize managers
+	if !globalStore.HasProjects() {
+		return fmt.Errorf("no projects registered. Create one with: openkanban new")
+	}
+
+	var filterProjectID string
+	if filterPath != "" {
+		absPath, _ := filepath.Abs(filterPath)
+		absPath = git.ResolveMainRepo(absPath)
+		if p, err := registry.FindByPath(absPath); err == nil {
+			filterProjectID = p.ID
+		}
+	}
+
 	agentMgr := agent.NewManager(cfg)
-	worktreeMgr := git.NewWorktreeManager(b.RepoPath, b.Settings.WorktreeBase)
+	model := ui.NewModel(cfg, globalStore, agentMgr, filterProjectID)
 
-	// Create the TUI model
-	model := ui.NewModel(cfg, b, boardDir, agentMgr, worktreeMgr)
-
-	// Run the Bubbletea program
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err = p.Run()
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	_, err = program.Run()
 	return err
 }
 
-// CreateBoard creates a new board for a repository
-func CreateBoard(cfg *config.Config, name, repoPath string) error {
-	// Verify it's a git repository
+func CreateProject(cfg *config.Config, name, repoPath string) error {
 	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
 		return fmt.Errorf("not a git repository: %s", repoPath)
 	}
 
-	// Create board with default settings
-	settings := board.BoardSettings{
-		DefaultAgent:     cfg.Defaults.DefaultAgent,
-		WorktreeBase:     cfg.Defaults.WorktreeBase,
-		AutoSpawnAgent:   cfg.Defaults.AutoSpawnAgent,
-		AutoCreateBranch: cfg.Defaults.AutoCreateBranch,
-		BranchPrefix:     cfg.Defaults.BranchPrefix,
-	}
-
-	if settings.WorktreeBase == "" {
-		settings.WorktreeBase = repoPath + "-worktrees"
-	}
-
-	b := board.NewBoard(name, repoPath, settings)
-
-	// Save board
-	boardDir, err := boardsDir()
+	registry, err := project.LoadRegistry()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to load project registry: %w", err)
 	}
 
-	if err := b.Save(boardDir); err != nil {
-		return fmt.Errorf("failed to save board: %w", err)
+	if existing, _ := registry.FindByPath(repoPath); existing != nil {
+		return fmt.Errorf("project already exists for %s: %s", repoPath, existing.Name)
 	}
 
-	fmt.Printf("Created board '%s' for %s\n", name, repoPath)
-	fmt.Printf("Board ID: %s\n", b.ID)
+	p := project.NewProject(name, repoPath)
+
+	if cfg.Defaults.DefaultAgent != "" {
+		p.Settings.DefaultAgent = cfg.Defaults.DefaultAgent
+	}
+	if cfg.Defaults.BranchPrefix != "" {
+		p.Settings.BranchPrefix = cfg.Defaults.BranchPrefix
+	}
+
+	if err := registry.Add(p); err != nil {
+		return fmt.Errorf("failed to save project: %w", err)
+	}
+
+	fmt.Printf("Created project '%s' for %s\n", name, repoPath)
+	fmt.Printf("Project ID: %s\n", p.ID)
 	return nil
 }
 
-// ListBoards displays all available boards
-func ListBoards(cfg *config.Config) error {
-	dir, err := boardsDir()
+func ListProjects() error {
+	registry, err := project.LoadRegistry()
 	if err != nil {
 		return err
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Println("No boards found. Create one with: openkanban new")
-			return nil
-		}
-		return err
+	projects := registry.List()
+	if len(projects) == 0 {
+		fmt.Println("No projects found. Create one with: openkanban new")
+		return nil
 	}
 
-	fmt.Println("Available boards:")
+	fmt.Println("Available projects:")
 	fmt.Println()
 
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-			path := filepath.Join(dir, entry.Name())
-			b, err := board.LoadBoard(path)
-			if err != nil {
-				continue
-			}
-
-			ticketCount := len(b.Tickets)
-			inProgress := len(b.GetTicketsByStatus(board.StatusInProgress))
-
-			fmt.Printf("  %s (%s)\n", b.Name, b.ID[:8])
-			fmt.Printf("    Path: %s\n", b.RepoPath)
-			fmt.Printf("    Tickets: %d total, %d in progress\n", ticketCount, inProgress)
-			fmt.Println()
+	for _, p := range projects {
+		tickets, err := project.LoadTicketStore(p)
+		if err != nil {
+			continue
 		}
+
+		total := tickets.Count()
+		inProgress := tickets.CountByStatus("in_progress")
+
+		fmt.Printf("  %s (%s)\n", p.Name, p.ID[:8])
+		fmt.Printf("    Path: %s\n", p.RepoPath)
+		fmt.Printf("    Tickets: %d total, %d in progress\n", total, inProgress)
+		fmt.Println()
 	}
 
 	return nil
-}
-
-// findBoard locates or prompts for a board
-func findBoard(cfg *config.Config, path string) (*board.Board, error) {
-	dir, err := boardsDir()
-	if err != nil {
-		return nil, err
-	}
-
-	// If path is a board ID, load directly
-	boardFile := filepath.Join(dir, path+".json")
-	if b, err := board.LoadBoard(boardFile); err == nil {
-		return b, nil
-	}
-
-	// If path is a repo path, find matching board
-	// Resolve worktree to main repo so worktrees share the same board
-	absPath, _ := filepath.Abs(path)
-	absPath = git.ResolveMainRepo(absPath)
-	entries, _ := os.ReadDir(dir)
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".json" {
-			b, err := board.LoadBoard(filepath.Join(dir, entry.Name()))
-			if err == nil && b.RepoPath == absPath {
-				return b, nil
-			}
-		}
-	}
-
-	// No board found, offer to create one
-	return nil, fmt.Errorf("no board found for %s. Create one with: openkanban new", path)
-}
-
-// boardsDir returns the directory where boards are stored
-func boardsDir() (string, error) {
-	cfgDir, err := config.ConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(cfgDir, "boards"), nil
 }
