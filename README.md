@@ -27,42 +27,10 @@ Each ticket on the board represents a task. When you start working on a ticket:
 
 1. **Git worktree created** - Isolated branch for that task
 2. **AI agent spawned** - Claude Code, OpenCode, or your preferred agent
-3. **tmux session managed** - Each task gets its own session
+3. **Embedded terminal** - Agent runs in an embedded PTY within the TUI
 4. **Status tracked** - See which agents are working/idle/done
 
-Move tickets across columns by dragging (or pressing `h`/`l`), and the board reflects real-time agent status.
-
-## Why This Exists
-
-Tools like [vibe-kanban](https://github.com/BloopAI/vibe-kanban) pioneered this concept with a web UI. But many developers prefer:
-
-- Staying in the terminal
-- Keyboard-driven workflows  
-- Integration with existing tmux setups
-- No browser/Electron overhead
-
-OpenKanban brings the same workflow to your terminal.
-
-## Features
-
-### Core
-- Kanban board with customizable columns
-- Per-ticket git worktrees (isolated development)
-- AI agent spawning (Claude Code, OpenCode, Aider, etc.)
-- Real-time agent status monitoring
-- tmux session management
-
-### Navigation
-- Vim-style keybindings (`h/j/k/l`)
-- Quick ticket creation (`n`)
-- Instant agent attachment (`enter`)
-- Drag tickets between columns
-
-### Integration
-- Works with any AI coding agent
-- Git worktree lifecycle management
-- Status hooks for your statusline/dashboard
-- JSON/SQLite state persistence
+Move tickets across columns with keyboard (`h`/`l`, `space`) or mouse drag-and-drop.
 
 ## Installation
 
@@ -79,56 +47,48 @@ go build -o openkanban .
 ## Quick Start
 
 ```bash
-# Initialize in a git repository
+# Register a git repository as a project
 cd ~/projects/my-app
-openkanban init
+openkanban new "My App"
 
-# Launch the board
+# Launch the board (shows all projects)
 openkanban
 
-# Or specify a different project
-openkanban --project ~/projects/other-app
+# Or filter to a specific project
+openkanban -p ~/projects/my-app
 ```
 
 ## Configuration
 
-Config lives in `~/.config/openkanban/config.yaml` or `.openkanban.yaml` in your project:
+Config lives in `~/.config/openkanban/config.json`:
 
-```yaml
-# Default AI agent to spawn
-default_agent: opencode  # or: claude, aider, cursor
-
-# Columns (customize your workflow)
-columns:
-  - name: Backlog
-    key: backlog
-  - name: In Progress  
-    key: in_progress
-  - name: Review
-    key: review
-  - name: Done
-    key: done
-
-# Worktree settings
-worktree:
-  base_dir: .worktrees  # Where to create worktrees
-  branch_prefix: task/  # Branch naming: task/ticket-slug
-
-# Agent-specific settings
-agents:
-  opencode:
-    command: opencode
-    args: ["--continue"]
-  claude:
-    command: claude
-    args: []
-  aider:
-    command: aider
-    args: ["--yes"]
-
-# tmux settings
-tmux:
-  session_prefix: ab-  # Session naming: ab-ticket-slug
+```json
+{
+  "defaults": {
+    "default_agent": "opencode",
+    "branch_prefix": "task/",
+    "branch_template": "{prefix}{slug}",
+    "slug_max_length": 40
+  },
+  "agents": {
+    "opencode": {
+      "command": "opencode",
+      "args": []
+    },
+    "claude": {
+      "command": "claude",
+      "args": ["--dangerously-skip-permissions"]
+    },
+    "aider": {
+      "command": "aider",
+      "args": ["--yes"]
+    }
+  },
+  "cleanup": {
+    "delete_worktree": true,
+    "delete_branch": false
+  }
+}
 ```
 
 ## Keybindings
@@ -136,140 +96,113 @@ tmux:
 | Key | Action |
 |-----|--------|
 | `j/k` | Move cursor up/down |
-| `h/l` | Move ticket left/right (change status) |
-| `enter` | Open/attach to ticket's agent session |
+| `h/l` | Move between columns |
+| `space` | Move ticket to next column |
+| `-` | Move ticket to previous column |
+| `enter` | Attach to running agent |
 | `n` | Create new ticket |
-| `e` | Edit ticket title |
+| `e` | Edit ticket |
+| `s` | Spawn agent for ticket |
+| `S` | Stop agent |
 | `d` | Delete ticket (with confirmation) |
-| `r` | Refresh agent statuses |
-| `s` | Sync worktrees |
+| `p` | Cycle project filter |
 | `?` | Show help |
 | `q` | Quit |
 
+**In agent view:**
+| Key | Action |
+|-----|--------|
+| `ctrl+g` | Return to board |
+| All other keys | Passed to agent |
+
 ## How It Works
+
+### Project Registration
+
+OpenKanban manages tickets across multiple git repositories. Each repo is registered as a "project":
+
+```bash
+openkanban new "Project Name"    # Register current directory
+openkanban list                   # Show all registered projects
+```
+
+Projects are stored in `~/.config/openkanban/projects.json`. Tickets for each project are stored in `{repo}/.openkanban/tickets.json`.
 
 ### Ticket Lifecycle
 
 1. **Create ticket** (`n`)
-   - Prompts for title/description
-   - Generates slug from title
-   - Saves to state file
+   - Enter title and optional description
+   - Select project (if multiple registered)
+   - Branch name auto-generated from title
 
 2. **Start work** (move to "In Progress")
-   - Creates git worktree: `.worktrees/task-slug`
-   - Creates branch: `task/ticket-slug`
-   - Spawns tmux session: `ab-ticket-slug`
-   - Launches configured agent in session
+   - Git worktree created automatically
+   - Branch created from default branch
 
-3. **Open ticket** (`enter`)
-   - Attaches to existing tmux session
-   - Or creates one if worktree exists
+3. **Spawn agent** (`s`)
+   - Agent launches in embedded terminal
+   - Worktree directory is working directory
+   - Agent receives ticket context
 
-4. **Complete ticket** (move to "Done")
-   - Agent keeps running (manual cleanup)
-   - Or auto-cleanup if configured
+4. **Work in agent** (`enter`)
+   - Full terminal emulation in TUI
+   - `ctrl+g` returns to board
 
-5. **Delete ticket** (`d`)
-   - Kills tmux session
-   - Removes worktree
-   - Deletes branch (optional)
+5. **Complete ticket** (move to "Done")
+   - Agent can keep running
+   - Or stop with `S`
 
-### State Management
-
-State is persisted to `.openkanban/state.json`:
-
-```json
-{
-  "tickets": [
-    {
-      "id": "abc123",
-      "title": "Implement authentication",
-      "slug": "implement-auth",
-      "status": "in_progress",
-      "agent": "opencode",
-      "worktree": ".worktrees/implement-auth",
-      "branch": "task/implement-auth",
-      "created_at": "2024-12-16T10:00:00Z",
-      "updated_at": "2024-12-16T14:30:00Z"
-    }
-  ]
-}
-```
+6. **Delete ticket** (`d`)
+   - Stops agent if running
+   - Removes worktree (configurable)
+   - Optionally deletes branch
 
 ## Architecture
 
 ```
 openkanban/
-├── cmd/
-│   └── openkanban/
-│       └── main.go           # Entry point
+├── cmd/root.go              # CLI commands
+├── main.go                  # Entry point
 ├── internal/
-│   ├── ui/                   # Bubbletea TUI
-│   │   ├── app.go           # Main application model
-│   │   ├── board.go         # Kanban board component
-│   │   ├── ticket.go        # Ticket card component
-│   │   ├── dialog.go        # Modal dialogs
-│   │   └── styles.go        # Lipgloss styles
-│   ├── core/                 # Business logic
-│   │   ├── ticket.go        # Ticket model
-│   │   ├── board.go         # Board operations
-│   │   └── config.go        # Configuration
-│   ├── git/                  # Git operations
-│   │   ├── worktree.go      # Worktree management
-│   │   └── branch.go        # Branch operations
-│   ├── agent/                # Agent spawning
-│   │   ├── manager.go       # Agent lifecycle
-│   │   ├── status.go        # Status monitoring
-│   │   └── tmux.go          # tmux integration
-│   └── store/                # Persistence
-│       ├── json.go          # JSON file store
-│       └── sqlite.go        # SQLite store (optional)
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── AGENT_INTEGRATION.md
-│   ├── DATA_MODEL.md
-│   └── UI_DESIGN.md
-├── go.mod
-├── go.sum
-└── README.md
+│   ├── app/app.go           # Application orchestration
+│   ├── ui/
+│   │   ├── model.go         # Bubbletea model + Update
+│   │   └── view.go          # Rendering
+│   ├── board/board.go       # Ticket model, columns
+│   ├── project/
+│   │   ├── project.go       # Project model
+│   │   ├── store.go         # Project registry
+│   │   ├── tickets.go       # Ticket storage
+│   │   └── filter.go        # Saved filters
+│   ├── terminal/pane.go     # PTY terminal emulation
+│   ├── agent/
+│   │   ├── agent.go         # Agent spawning
+│   │   ├── context.go       # Ticket context injection
+│   │   └── status.go        # Status detection
+│   ├── git/worktree.go      # Git worktree operations
+│   └── config/config.go     # Configuration
+└── docs/
 ```
 
 ## Supported Agents
 
 | Agent | Status | Notes |
 |-------|--------|-------|
-| OpenCode | Full | Native support |
-| Claude Code | Full | Native support |
+| OpenCode | Full | Native support with session resume |
+| Claude Code | Full | Native support with `--continue` |
 | Aider | Full | `--yes` flag recommended |
-| Cursor | Partial | Opens in GUI |
-| Codex | Planned | |
 
-## Roadmap
+## Tech Stack
 
-### MVP (v0.1)
-- [ ] Basic kanban board UI
-- [ ] Ticket CRUD
-- [ ] Git worktree creation
-- [ ] tmux session spawning
-- [ ] Agent status detection
-
-### v0.2
-- [ ] Multiple agent support
-- [ ] Custom columns
-- [ ] Ticket filtering/search
-- [ ] Status hooks for external tools
-
-### v0.3
-- [ ] SQLite persistence option
-- [ ] Ticket templates
-- [ ] Time tracking
-- [ ] GitHub/GitLab issue sync
+- **Go 1.23+**
+- **[Bubbletea](https://github.com/charmbracelet/bubbletea)** - TUI framework
+- **[Lipgloss](https://github.com/charmbracelet/lipgloss)** - Styling (Catppuccin Mocha)
+- **[vt10x](https://github.com/hinshun/vt10x)** - Terminal emulation
+- **[creack/pty](https://github.com/creack/pty)** - PTY handling
 
 ## Prior Art
 
 - [vibe-kanban](https://github.com/BloopAI/vibe-kanban) - Web-based kanban for AI agents (inspiration)
-- [claude-flow](https://github.com/ruvnet/claude-flow) - Multi-agent orchestration
-- [kanban-tui](https://github.com/Zaloog/kanban-tui) - Python TUI kanban (no AI integration)
 
 ## License
 

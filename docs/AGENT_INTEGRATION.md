@@ -1,588 +1,502 @@
 # Agent Integration
 
-This document describes how Agent Board spawns, monitors, and manages AI coding agents.
+This document describes how OpenKanban spawns, monitors, and manages AI coding agents.
 
 ## Overview
 
-Agent Board treats AI agents as external processes managed through tmux sessions. This approach provides:
+OpenKanban runs AI agents in embedded PTY terminals within the TUI. This approach provides:
 
-- **Isolation**: Each ticket gets its own session
-- **Persistence**: Sessions survive Agent Board restarts
-- **Flexibility**: Any CLI-based agent works
-- **Familiarity**: Users can manage sessions with standard tmux commands
+- **Seamless UX**: No context switching to external terminals
+- **Integrated view**: See agent output directly in the board
+- **Full terminal emulation**: Colors, cursor movement, interactive prompts
+- **Easy navigation**: `ctrl+g` returns to board view
 
 ## Supported Agents
 
 ### Tier 1: Full Support
-Agents with native status detection and tested integration.
 
-| Agent | Command | Status Detection | Notes |
-|-------|---------|------------------|-------|
-| OpenCode | `opencode` | Process + hooks | Your primary target |
-| Claude Code | `claude` | Process + hooks | Anthropic's CLI |
-| Aider | `aider` | Process only | Use `--yes --no-auto-commits` |
+Agents with native support and session continuation.
 
-### Tier 2: Basic Support
-Agents that work but may have limited status detection.
+| Agent | Command | Session Resume | Notes |
+|-------|---------|----------------|-------|
+| OpenCode | `opencode` | `--session` flag | Native session lookup |
+| Claude Code | `claude` | `--continue` flag | Continues last session |
+| Aider | `aider` | N/A | Use `--yes` flag |
 
-| Agent | Command | Notes |
-|-------|---------|-------|
-| Cursor | `cursor` | Opens GUI, limited TUI integration |
-| Continue | `continue` | TUI mode supported |
-| Codex | `codex` | When available |
+### Tier 2: Generic Support
 
-### Tier 3: Generic Support
 Any CLI tool that runs interactively.
 
-```yaml
-agents:
-  custom-agent:
-    command: /path/to/agent
-    args: ["--interactive"]
+```json
+{
+  "agents": {
+    "custom-agent": {
+      "command": "/path/to/agent",
+      "args": ["--interactive"]
+    }
+  }
+}
 ```
 
-## Spawning Agents
+## Agent Lifecycle
 
-### Lifecycle
+### Spawning an Agent
 
 ```
-┌─────────────┐
-│ Ticket in   │
-│  Backlog    │
-└─────────────┘
+User presses 's' on in-progress ticket
        │
-       │ User moves to "In Progress"
        ▼
 ┌─────────────────────────────────────────┐
-│ 1. Create git worktree                  │
-│    git worktree add .worktrees/slug     │
-│    task/ticket-slug                     │
+│ 1. Check ticket status                  │
+│    Must be "in_progress"                │
 └─────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────┐
-│ 2. Create tmux session                  │
-│    tmux new-session -d -s ab-slug       │
-│    -c .worktrees/slug                   │
+│ 2. Ensure worktree exists               │
+│    Create if missing                    │
 └─────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────┐
-│ 3. Send agent command                   │
-│    tmux send-keys -t ab-slug            │
-│    'opencode --continue' Enter          │
+│ 3. Create terminal pane                 │
+│    terminal.New(ticketID, width, height)│
+│    pane.SetWorkdir(worktreePath)        │
 └─────────────────────────────────────────┘
        │
        ▼
-┌─────────────┐
-│ Agent is    │
-│  running    │
-└─────────────┘
+┌─────────────────────────────────────────┐
+│ 4. Build agent command                  │
+│    Add context prompt for new sessions  │
+│    Add --continue/--session for resume  │
+└─────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────┐
+│ 5. Start PTY                            │
+│    pane.Start(command, args...)         │
+└─────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────┐
+│ 6. Enter agent view                     │
+│    mode = ModeAgentView                 │
+│    Full-screen terminal display         │
+└─────────────────────────────────────────┘
 ```
 
 ### Implementation
 
 ```go
-// internal/agent/spawn.go
+// internal/ui/model.go - spawnAgent()
 
-type SpawnOptions struct {
-    Ticket      *core.Ticket
-    WorktreePath string
-    AgentConfig  AgentConfig
+func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
+    ticket := m.selectedTicket()
+    if ticket.Status != board.StatusInProgress {
+        m.notify("Move ticket to In Progress first")
+        return m, nil
+    }
+
+    // Ensure worktree exists
+    if ticket.WorktreePath == "" {
+        if err := m.setupWorktree(ticket); err != nil {
+            m.notify("Failed to create worktree: " + err.Error())
+            return m, nil
+        }
+    }
+
+    // Get agent config
+    agentType := proj.Settings.DefaultAgent
+    agentCfg := m.config.Agents[agentType]
+
+    // Create terminal pane
+    pane := terminal.New(string(ticket.ID), m.width, m.height-2)
+    pane.SetWorkdir(ticket.WorktreePath)
+    m.panes[ticket.ID] = pane
+
+    // Build args with context
+    isNewSession := agent.ShouldInjectContext(ticket)
+    args := m.buildAgentArgs(agentCfg, ticket, isNewSession)
+
+    // Enter agent view
+    m.mode = ModeAgentView
+    m.focusedPane = ticket.ID
+
+    return m, pane.Start(agentCfg.Command, args...)
+}
+```
+
+### Context Injection
+
+For new sessions, OpenKanban injects ticket context:
+
+```go
+// internal/agent/context.go
+
+func BuildContextPrompt(template string, ticket *board.Ticket) string {
+    // Template variables:
+    // {{.Title}}       - Ticket title
+    // {{.Description}} - Ticket description
+    // {{.BranchName}}  - Git branch name
+    // {{.BaseBranch}}  - Base branch (e.g., main)
+    
+    result := strings.ReplaceAll(template, "{{.Title}}", ticket.Title)
+    result = strings.ReplaceAll(result, "{{.Description}}", ticket.Description)
+    // ...
+    return result
 }
 
-func (m *Manager) Spawn(opts SpawnOptions) error {
-    sessionName := m.sessionName(opts.Ticket)
-    
-    // Create tmux session in worktree directory
-    createCmd := exec.Command("tmux", "new-session",
-        "-d",                      // Detached
-        "-s", sessionName,         // Session name
-        "-c", opts.WorktreePath,   // Working directory
-    )
-    if err := createCmd.Run(); err != nil {
-        return fmt.Errorf("creating tmux session: %w", err)
+func ShouldInjectContext(ticket *board.Ticket) bool {
+    // New session if never spawned before
+    return ticket.AgentSpawnedAt == nil
+}
+```
+
+Default prompt template:
+
+```
+You have been spawned by OpenKanban to work on a ticket.
+
+**Title:** {{.Title}}
+
+**Description:**
+{{.Description}}
+
+**Branch:** {{.BranchName}} (from {{.BaseBranch}})
+
+Focus on completing this ticket. Ask clarifying questions if needed.
+```
+
+### Session Continuation
+
+For returning to an existing session:
+
+**OpenCode:**
+```go
+case "opencode":
+    if !isNewSession {
+        if sessionID := agent.FindOpencodeSession(ticket.WorktreePath); sessionID != "" {
+            args = append(args, "--session", sessionID)
+        }
     }
-    
-    // Build agent command
-    agentCmd := opts.AgentConfig.Command
-    if len(opts.AgentConfig.Args) > 0 {
-        agentCmd += " " + strings.Join(opts.AgentConfig.Args, " ")
+```
+
+**Claude Code:**
+```go
+case "claude":
+    if !isNewSession {
+        args = append(args, "--continue")
     }
-    
-    // Send the command to start the agent
-    sendCmd := exec.Command("tmux", "send-keys",
-        "-t", sessionName,
-        agentCmd, "Enter",
-    )
-    if err := sendCmd.Run(); err != nil {
-        return fmt.Errorf("starting agent: %w", err)
+```
+
+## Terminal Pane
+
+### PTY Architecture
+
+```go
+// internal/terminal/pane.go
+
+type Pane struct {
+    id      string
+    vt      vt10x.Terminal   // Virtual terminal (handles escape sequences)
+    pty     *os.File         // PTY master file descriptor
+    cmd     *exec.Cmd        // Running process
+    workdir string           // Working directory
+    width   int
+    height  int
+}
+```
+
+### Starting a Process
+
+```go
+func (p *Pane) Start(command string, args ...string) tea.Cmd {
+    return func() tea.Msg {
+        // Create virtual terminal
+        p.vt = vt10x.New(vt10x.WithSize(p.width, p.height))
+
+        // Build command
+        p.cmd = exec.Command(command, args...)
+        p.cmd.Env = buildCleanEnv()  // Filter OPENCODE_*, CLAUDE_* vars
+        p.cmd.Dir = p.workdir
+
+        // Start PTY
+        ptmx, err := pty.Start(p.cmd)
+        if err != nil {
+            return ExitMsg{PaneID: p.id, Err: err}
+        }
+        p.pty = ptmx
+
+        // Set terminal size
+        pty.Setsize(p.pty, &pty.Winsize{
+            Rows: uint16(p.height),
+            Cols: uint16(p.width),
+        })
+
+        // Start reading output
+        return p.readOutput()()
     }
-    
-    // Register for status tracking
-    m.registerSession(opts.Ticket.ID, sessionName)
-    
+}
+```
+
+### Input Handling
+
+```go
+func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
+    // ctrl+g exits agent view
+    if msg.String() == "ctrl+g" {
+        return ExitFocusMsg{}
+    }
+
+    // Convert key to PTY escape sequence
+    input := p.translateKey(msg)
+    p.pty.Write(input)
     return nil
 }
 
-func (m *Manager) sessionName(ticket *core.Ticket) string {
-    return fmt.Sprintf("%s%s", m.config.SessionPrefix, ticket.Slug)
+func (p *Pane) translateKey(msg tea.KeyMsg) []byte {
+    switch msg.Type {
+    case tea.KeyEnter:
+        return []byte("\r")
+    case tea.KeyUp:
+        return []byte("\x1b[A")
+    case tea.KeyDown:
+        return []byte("\x1b[B")
+    // ... etc
+    }
+    return []byte(string(msg.Runes))
+}
+```
+
+### Rendering
+
+```go
+func (p *Pane) View() string {
+    // Render vt10x buffer with ANSI colors
+    // Handles cursor position, colors, attributes
 }
 ```
 
 ## Status Detection
 
-Agent Board uses multiple methods to detect agent status:
-
-### Method 1: Status Files (Preferred)
-
-Some agents (like Claude Code with hooks) write status files:
-
-```
-~/.cache/claude-status/
-├── ab-auth-system.status    # "working" or "done"
-├── ab-api-endpoints.status
-└── ...
-```
+### Status Types
 
 ```go
-// internal/agent/status_file.go
-
-func (m *Manager) readStatusFile(ticket *core.Ticket) (AgentStatus, error) {
-    pattern := m.config.Agents[ticket.Agent].StatusFile
-    // Replace {session} with actual session name
-    path := strings.Replace(pattern, "{session}", m.sessionName(ticket), 1)
-    
-    data, err := os.ReadFile(path)
-    if os.IsNotExist(err) {
-        return StatusUnknown, nil
-    }
-    if err != nil {
-        return StatusUnknown, err
-    }
-    
-    content := strings.TrimSpace(string(data))
-    switch content {
-    case "working":
-        return StatusWorking, nil
-    case "done", "idle":
-        return StatusIdle, nil
-    default:
-        return StatusUnknown, nil
-    }
-}
-```
-
-### Method 2: Process Detection
-
-Fall back to checking if agent process is running in the session:
-
-```go
-// internal/agent/status_process.go
-
-func (m *Manager) detectFromProcess(ticket *core.Ticket) AgentStatus {
-    sessionName := m.sessionName(ticket)
-    
-    // Get the TTY for this tmux session
-    ttyCmd := exec.Command("tmux", "list-panes",
-        "-t", sessionName,
-        "-F", "#{pane_tty}",
-    )
-    ttyOut, err := ttyCmd.Output()
-    if err != nil {
-        return StatusNotRunning
-    }
-    tty := strings.TrimSpace(string(ttyOut))
-    
-    // Check if agent process is running on that TTY
-    agentName := m.config.Agents[ticket.Agent].Command
-    psCmd := exec.Command("ps", "aux")
-    psOut, _ := psCmd.Output()
-    
-    // Parse ps output, look for agent on this TTY
-    for _, line := range strings.Split(string(psOut), "\n") {
-        if strings.Contains(line, agentName) && strings.Contains(line, tty) {
-            // Agent is running
-            // Check if it's actively working (heuristics)
-            if strings.Contains(line, "R") || strings.Contains(line, "S+") {
-                return StatusWorking
-            }
-            return StatusIdle
-        }
-    }
-    
-    return StatusNotRunning
-}
-```
-
-### Method 3: Activity Heuristics
-
-For agents without status files, detect activity from tmux pane:
-
-```go
-// internal/agent/status_activity.go
-
-func (m *Manager) detectFromActivity(ticket *core.Ticket) AgentStatus {
-    sessionName := m.sessionName(ticket)
-    
-    // Capture recent pane content
-    captureCmd := exec.Command("tmux", "capture-pane",
-        "-t", sessionName,
-        "-p",           // Print to stdout
-        "-S", "-5",     // Last 5 lines
-    )
-    out, err := captureCmd.Output()
-    if err != nil {
-        return StatusUnknown
-    }
-    
-    content := string(out)
-    
-    // Heuristics for "working" state
-    workingIndicators := []string{
-        "Thinking...",
-        "Writing...",
-        "Reading...",
-        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", // Spinners
-    }
-    
-    for _, indicator := range workingIndicators {
-        if strings.Contains(content, indicator) {
-            return StatusWorking
-        }
-    }
-    
-    // Check for prompt (agent waiting for input)
-    promptIndicators := []string{
-        "> ",
-        "$ ",
-        "❯ ",
-    }
-    
-    lines := strings.Split(strings.TrimSpace(content), "\n")
-    if len(lines) > 0 {
-        lastLine := lines[len(lines)-1]
-        for _, prompt := range promptIndicators {
-            if strings.HasSuffix(lastLine, prompt) {
-                return StatusIdle
-            }
-        }
-    }
-    
-    return StatusUnknown
-}
-```
-
-### Combined Status Detection
-
-```go
-// internal/agent/status.go
-
-type AgentStatus int
+type AgentStatus string
 
 const (
-    StatusNotRunning AgentStatus = iota
-    StatusWorking
-    StatusIdle
-    StatusUnknown
+    AgentNone      AgentStatus = ""         // No agent
+    AgentIdle      AgentStatus = "idle"     // Waiting for input
+    AgentWorking   AgentStatus = "working"  // Processing
+    AgentWaiting   AgentStatus = "waiting"  // Waiting for user
+    AgentCompleted AgentStatus = "completed"
+    AgentError     AgentStatus = "error"
 )
+```
 
-func (m *Manager) GetStatus(ticket *core.Ticket) AgentStatus {
-    sessionName := m.sessionName(ticket)
-    
-    // First, check if session exists
-    hasSession := exec.Command("tmux", "has-session", "-t", sessionName)
-    if hasSession.Run() != nil {
-        return StatusNotRunning
-    }
-    
-    // Try status file first (most reliable)
-    if m.config.UseStatusFiles {
-        if status, err := m.readStatusFile(ticket); err == nil && status != StatusUnknown {
-            return status
-        }
-    }
-    
-    // Fall back to process detection
-    if m.config.FallbackToProcess {
-        if status := m.detectFromProcess(ticket); status != StatusUnknown {
-            return status
-        }
-    }
-    
-    // Last resort: activity heuristics
-    return m.detectFromActivity(ticket)
+### Detection Methods
+
+**1. Process State**
+```go
+func (p *Pane) Running() bool {
+    return p.running && p.cmd != nil && p.cmd.Process != nil
 }
 ```
 
-## Session Management
+**2. Status Files** (for OpenCode/Claude)
+```go
+func (d *StatusDetector) DetectStatus(agentType, sessionID string, running bool) AgentStatus {
+    if !running {
+        return AgentNone
+    }
+    
+    // Check agent-specific status file
+    switch agentType {
+    case "opencode":
+        return d.checkOpencodeStatus(sessionID)
+    case "claude":
+        return d.checkClaudeStatus(sessionID)
+    }
+    
+    return AgentIdle
+}
+```
 
-### Attaching to Sessions
+### Polling
 
-When user opens a ticket, suspend the TUI and attach:
+Status is polled at configurable intervals:
 
 ```go
-// internal/agent/attach.go
+func tickAgentStatus(d time.Duration) tea.Cmd {
+    return tea.Tick(d, func(t time.Time) tea.Msg {
+        return agentStatusMsg(t)
+    })
+}
 
-func (m *Manager) Attach(ticket *core.Ticket) tea.Cmd {
-    sessionName := m.sessionName(ticket)
-    
-    // Use tea.ExecProcess to suspend TUI and run tmux attach
-    return tea.ExecProcess(
-        exec.Command("tmux", "attach-session", "-t", sessionName),
-        func(err error) tea.Msg {
-            if err != nil {
-                return ErrorMsg{Err: err}
-            }
-            return SessionDetachedMsg{TicketID: ticket.ID}
-        },
+// In Update():
+case agentStatusMsg:
+    return m, tea.Batch(
+        m.pollAgentStatusesAsync(),
+        tickAgentStatus(m.agentMgr.StatusPollInterval()),
     )
-}
 ```
 
-### Killing Sessions
+## Configuration
 
-When user deletes a ticket or cleans up:
+### Agent Config
 
-```go
-// internal/agent/cleanup.go
-
-func (m *Manager) Kill(ticket *core.Ticket) error {
-    sessionName := m.sessionName(ticket)
-    
-    // Kill the tmux session
-    cmd := exec.Command("tmux", "kill-session", "-t", sessionName)
-    return cmd.Run()
-}
-```
-
-### Listing Sessions
-
-For status overview:
-
-```go
-// internal/agent/list.go
-
-type SessionInfo struct {
-    Name      string
-    TicketID  string
-    Created   time.Time
-    Attached  bool
-}
-
-func (m *Manager) ListSessions() ([]SessionInfo, error) {
-    cmd := exec.Command("tmux", "list-sessions",
-        "-F", "#{session_name}:#{session_created}:#{session_attached}",
-    )
-    out, err := cmd.Output()
-    if err != nil {
-        return nil, err
-    }
-    
-    var sessions []SessionInfo
-    for _, line := range strings.Split(string(out), "\n") {
-        if !strings.HasPrefix(line, m.config.SessionPrefix) {
-            continue
-        }
-        parts := strings.Split(line, ":")
-        // Parse and append...
-    }
-    return sessions, nil
-}
-```
-
-## Status Hooks Integration
-
-### For Claude Code
-
-Create a hook that writes status files:
-
-```bash
-# ~/.claude/hooks/openkanban-hook
-#!/bin/bash
-# Called by Claude Code hooks system
-
-SESSION=$(tmux display-message -p '#S' 2>/dev/null)
-if [[ "$SESSION" == ab-* ]]; then
-    STATUS_DIR="$HOME/.cache/openkanban-status"
-    mkdir -p "$STATUS_DIR"
-    
-    case "$1" in
-        PreToolUse|PreAskUser)
-            echo "working" > "$STATUS_DIR/${SESSION}.status"
-            ;;
-        PostToolUse|Stop)
-            echo "idle" > "$STATUS_DIR/${SESSION}.status"
-            ;;
-    esac
-fi
-```
-
-### For OpenCode
-
-OpenCode can be configured to emit status:
-
-```yaml
-# ~/.config/opencode/opencode.json
+```json
 {
-  "hooks": {
-    "onStart": "echo working > ~/.cache/openkanban-status/${TMUX_SESSION}.status",
-    "onIdle": "echo idle > ~/.cache/openkanban-status/${TMUX_SESSION}.status"
+  "agents": {
+    "opencode": {
+      "command": "opencode",
+      "args": [],
+      "status_file": ".opencode/status.json",
+      "init_prompt": "Custom prompt for OpenCode..."
+    },
+    "claude": {
+      "command": "claude",
+      "args": ["--dangerously-skip-permissions"],
+      "status_file": ".claude/status.json",
+      "init_prompt": "Custom prompt for Claude..."
+    },
+    "aider": {
+      "command": "aider",
+      "args": ["--yes"],
+      "init_prompt": "Custom prompt for Aider..."
+    }
+  },
+  "defaults": {
+    "default_agent": "opencode",
+    "init_prompt": "Default prompt for all agents..."
   }
 }
 ```
 
-## Polling Strategy
+### Prompt Priority
 
-Agent Board polls status at configurable intervals:
+1. Agent-specific `init_prompt` in config
+2. Global `defaults.init_prompt` in config
+3. Built-in default prompt
+
+## Environment Isolation
+
+When spawning agents, OpenKanban filters environment variables to prevent nested session detection:
 
 ```go
-// internal/agent/poller.go
-
-func (m *Manager) StartPolling(interval time.Duration) tea.Cmd {
-    return tea.Every(interval, func(t time.Time) tea.Msg {
-        statuses := make(map[string]AgentStatus)
-        for ticketID := range m.running {
-            ticket := m.store.GetTicket(ticketID)
-            statuses[ticketID] = m.GetStatus(ticket)
+func buildCleanEnv() []string {
+    var env []string
+    for _, e := range os.Environ() {
+        key := strings.Split(e, "=")[0]
+        // Skip agent-specific vars that might cause issues
+        if key == "OPENCODE" || strings.HasPrefix(key, "OPENCODE_") {
+            continue
         }
-        return AgentStatusBatchMsg{Statuses: statuses}
-    })
+        if key == "CLAUDE" || strings.HasPrefix(key, "CLAUDE_") {
+            continue
+        }
+        env = append(env, e)
+    }
+    env = append(env, "TERM=xterm-256color")
+    return env
 }
 ```
 
-Default: Poll every 2 seconds for active tickets.
+## Adding New Agents
+
+### 1. Add Configuration
+
+```json
+{
+  "agents": {
+    "new-agent": {
+      "command": "new-agent-cli",
+      "args": ["--mode", "interactive"],
+      "init_prompt": "You are working on: {{.Title}}"
+    }
+  }
+}
+```
+
+### 2. Handle Session Resume (Optional)
+
+If the agent supports session continuation, add logic to `buildAgentArgs()`:
+
+```go
+case "new-agent":
+    if !isNewSession {
+        // Add session resume flag
+        args = append(args, "--resume", ticket.ID)
+    }
+```
+
+### 3. Add Status Detection (Optional)
+
+If the agent writes status files:
+
+```go
+func (d *StatusDetector) checkNewAgentStatus(sessionID string) AgentStatus {
+    path := filepath.Join(os.Getenv("HOME"), ".new-agent", "status", sessionID)
+    // Read and parse status
+}
+```
 
 ## Error Handling
 
 ### Spawn Failures
 
 ```go
-func (m *Manager) Spawn(opts SpawnOptions) error {
-    // ... spawn logic ...
-    
-    if err != nil {
-        // Clean up partial state
-        m.Kill(opts.Ticket) // Kill session if it was created
-        return &SpawnError{
-            Ticket: opts.Ticket,
-            Phase:  "agent_start",
-            Err:    err,
-        }
-    }
+// PTY start fails
+if err != nil {
+    return ExitMsg{PaneID: p.id, Err: err}
 }
+
+// Handled in Update():
+case terminal.ExitMsg:
+    delete(m.panes, board.TicketID(msg.PaneID))
+    m.notify("Agent exited")
 ```
 
 ### Agent Crashes
 
-Detected via status polling:
+When the agent process exits:
 
 ```go
-func (m Model) handleStatusUpdate(msg AgentStatusBatchMsg) (tea.Model, tea.Cmd) {
-    for ticketID, status := range msg.Statuses {
-        ticket := m.board.GetTicket(ticketID)
-        
-        if status == StatusNotRunning && ticket.Status == core.StatusInProgress {
-            // Agent died unexpectedly
-            m.notifications = append(m.notifications, Notification{
-                Level:   Warning,
-                Message: fmt.Sprintf("Agent for '%s' stopped", ticket.Title),
-                Action:  "Press 'r' to restart",
-            })
-        }
-    }
-    return m, nil
+// In pane read loop - EOF means process exited
+n, err := ptyFile.Read(buf)
+if err != nil {
+    return ExitMsg{PaneID: paneID, Err: err}
 }
 ```
 
-## Adding New Agents
+### Recovery
 
-To add support for a new agent:
-
-1. **Add configuration**:
-
-```yaml
-# config.yaml
-agents:
-  new-agent:
-    command: new-agent-cli
-    args: ["--mode", "interactive"]
-    status_file: ""  # Optional
-    detect_patterns:
-      working: ["Processing", "Analyzing"]
-      idle: ["> ", "Ready"]
-```
-
-2. **Test spawning**:
-
-```bash
-# Manual test
-tmux new-session -d -s test-agent -c /tmp 'new-agent-cli --mode interactive'
-tmux attach -t test-agent
-# Verify agent works, then detach
-```
-
-3. **Verify status detection**:
-
-```go
-// In tests
-func TestNewAgentStatusDetection(t *testing.T) {
-    mgr := agent.NewManager(config)
-    
-    // Start agent
-    ticket := &core.Ticket{Slug: "test", Agent: "new-agent"}
-    mgr.Spawn(SpawnOptions{Ticket: ticket, WorktreePath: "/tmp"})
-    
-    // Check status detection
-    time.Sleep(2 * time.Second)
-    status := mgr.GetStatus(ticket)
-    
-    if status == StatusUnknown {
-        t.Error("Could not detect agent status")
-    }
-}
-```
+User can restart with `s` key on the ticket.
 
 ## Security Considerations
 
-### Command Injection
+### Command Sources
 
-Agent commands come from config, not user input:
-
-```go
-// SAFE: Config-defined command
-agentCmd := config.Agents[ticket.Agent].Command
-
-// NEVER: User-provided command
-// agentCmd := userInput  // DON'T DO THIS
-```
-
-### Session Isolation
-
-Each ticket's session is named with a prefix:
+Agent commands come only from config, never user input:
 
 ```go
-// Only manage our sessions
-if !strings.HasPrefix(sessionName, config.SessionPrefix) {
-    return ErrNotOurSession
-}
+// SAFE: From validated config
+agentCfg := m.config.Agents[agentType]
+pane.Start(agentCfg.Command, args...)
+
+// NEVER: From user input
+// pane.Start(userInput, ...)
 ```
 
-### Worktree Paths
+### Worktree Validation
 
-Validate worktree paths are within expected directory:
+Worktrees are always within the project's designated directory:
 
 ```go
-func (m *Manager) validateWorktreePath(path string) error {
-    abs, err := filepath.Abs(path)
-    if err != nil {
-        return err
-    }
-    
-    expected := filepath.Join(m.repoRoot, m.config.WorktreeDir)
-    if !strings.HasPrefix(abs, expected) {
-        return ErrInvalidWorktreePath
-    }
-    return nil
-}
+worktreePath := filepath.Join(m.worktreeDir, branchName)
+// Path is always under worktreeDir, can't escape
 ```
+
+### Environment Filtering
+
+Prevents sensitive environment variables from leaking to agents and prevents nested session issues.

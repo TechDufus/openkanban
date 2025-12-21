@@ -2,11 +2,11 @@
 
 ## System Overview
 
-Agent Board is a TUI application built with Go and Bubbletea that orchestrates AI coding agents across multiple isolated development environments.
+OpenKanban is a TUI application built with Go and Bubbletea that orchestrates AI coding agents across multiple isolated development environments.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Agent Board TUI                          │
+│                       OpenKanban TUI                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
 │  │   Backlog   │  │ In Progress │  │    Done     │              │
 │  │  ┌───────┐  │  │  ┌───────┐  │  │  ┌───────┐  │              │
@@ -19,8 +19,8 @@ Agent Board is a TUI application built with Go and Bubbletea that orchestrates A
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Core Engine                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ Ticket Store │  │ Git Manager  │  │Terminal Panes│          │
-│  │  (JSON/SQL)  │  │  (worktrees) │  │   (PTY)      │          │
+│  │ Project/     │  │ Git Manager  │  │Terminal Panes│          │
+│  │ TicketStore  │  │  (worktrees) │  │   (PTY)      │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
          │                   │                   │
@@ -29,9 +29,42 @@ Agent Board is a TUI application built with Go and Bubbletea that orchestrates A
 │                     System Layer                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │  Filesystem  │  │     Git      │  │  PTY/vt10x   │          │
-│  │ (.openkanban) │  │  (worktrees) │  │ (terminals)  │          │
+│  │ (.openkanban)│  │  (worktrees) │  │ (terminals)  │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## Directory Structure
+
+```
+openkanban/
+├── cmd/root.go              # CLI commands (Cobra)
+├── main.go                  # Entry point
+├── internal/
+│   ├── app/app.go           # Application orchestration
+│   ├── ui/
+│   │   ├── model.go         # Bubbletea model, Update loop, key handling
+│   │   └── view.go          # Rendering logic
+│   ├── board/board.go       # Ticket struct, columns, status types
+│   ├── project/
+│   │   ├── project.go       # Project model
+│   │   ├── store.go         # Project registry (~/.config/openkanban/projects.json)
+│   │   ├── tickets.go       # TicketStore, GlobalTicketStore
+│   │   └── filter.go        # SavedFilter for views
+│   ├── terminal/pane.go     # PTY-based embedded terminal (vt10x)
+│   ├── agent/
+│   │   ├── agent.go         # Agent manager
+│   │   ├── context.go       # Ticket context injection
+│   │   └── status.go        # Agent status detection
+│   ├── git/worktree.go      # Git worktree operations
+│   └── config/config.go     # Configuration loading
+├── docs/
+│   ├── AGENT_INTEGRATION.md
+│   ├── DATA_MODEL.md
+│   └── UI_DESIGN.md
+├── go.mod
+├── go.sum
+└── README.md
 ```
 
 ## Component Breakdown
@@ -41,206 +74,208 @@ Agent Board is a TUI application built with Go and Bubbletea that orchestrates A
 Built with [Bubbletea](https://github.com/charmbracelet/bubbletea) (Elm architecture):
 
 ```go
-// Model holds all application state
 type Model struct {
-    board      BoardModel      // Kanban columns and tickets
-    focused    FocusState      // What's currently focused
-    dialog     DialogModel     // Modal dialogs (create/edit/confirm)
-    config     *Config         // Application configuration
-    gitMgr     *git.Manager    // Git operations
-    agentMgr   *agent.Manager  // Agent lifecycle
-    store      store.Store     // Persistence
-    width      int             // Terminal width
-    height     int             // Terminal height
+    config          *config.Config
+    globalStore     *project.GlobalTicketStore  // All projects & tickets
+    columns         []board.Column
+    filterProjectID string                       // Current project filter
+    worktreeMgrs    map[string]*git.WorktreeManager
+    agentMgr        *agent.Manager
+    mode            Mode                         // Normal, Create, Edit, AgentView...
+    panes           map[board.TicketID]*terminal.Pane
+    // ... navigation state, form inputs, etc.
 }
 
-// Update handles all messages (Elm architecture)
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     switch msg := msg.(type) {
     case tea.KeyMsg:
-        return m.handleKeypress(msg)
-    case tea.WindowSizeMsg:
-        return m.handleResize(msg)
-    case AgentStatusMsg:
-        return m.handleAgentStatus(msg)
+        return m.handleKey(msg)
+    case tea.MouseMsg:
+        return m.handleMouse(msg)
+    case terminal.OutputMsg:
+        return m.handleTerminalMsg(msg)
     // ...
     }
 }
 ```
 
-**Components:**
+**Modes:**
+- `ModeNormal` - Board navigation
+- `ModeCreateTicket` - Ticket creation form
+- `ModeEditTicket` - Ticket edit form
+- `ModeAgentView` - Full-screen embedded terminal
+- `ModeSettings` - Settings panel
+- `ModeHelp` - Help overlay
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `App` | `app.go` | Root model, message routing |
-| `Board` | `board.go` | Columns, ticket layout |
-| `Ticket` | `ticket.go` | Single ticket card rendering |
-| `Dialog` | `dialog.go` | Modal dialogs (create, edit, confirm) |
-| `Help` | `help.go` | Help overlay |
-| `Styles` | `styles.go` | Lipgloss styles (Catppuccin theme) |
+### 2. Project Layer (`internal/project/`)
 
-### 2. Core Layer (`internal/core/`)
-
-Business logic, decoupled from UI:
+Multi-project architecture:
 
 ```go
-// Ticket represents a single task
-type Ticket struct {
-    ID          string    `json:"id"`
-    Title       string    `json:"title"`
-    Slug        string    `json:"slug"`
-    Description string    `json:"description,omitempty"`
-    Status      Status    `json:"status"`
-    Agent       string    `json:"agent,omitempty"`
-    Worktree    string    `json:"worktree,omitempty"`
-    Branch      string    `json:"branch,omitempty"`
-    CreatedAt   time.Time `json:"created_at"`
-    UpdatedAt   time.Time `json:"updated_at"`
+// Project represents a registered git repository
+type Project struct {
+    ID          string          `json:"id"`
+    Name        string          `json:"name"`
+    RepoPath    string          `json:"repo_path"`
+    WorktreeDir string          `json:"worktree_dir,omitempty"`
+    Settings    ProjectSettings `json:"settings"`
 }
 
-// Status represents ticket state
-type Status string
+// ProjectRegistry manages all registered projects
+// Stored in ~/.config/openkanban/projects.json
+type ProjectRegistry struct {
+    Projects map[string]*Project `json:"projects"`
+}
 
-const (
-    StatusBacklog    Status = "backlog"
-    StatusInProgress Status = "in_progress"
-    StatusReview     Status = "review"
-    StatusDone       Status = "done"
-)
+// TicketStore holds tickets for a single project
+// Stored in {repo}/.openkanban/tickets.json
+type TicketStore struct {
+    ProjectID string
+    Tickets   map[board.TicketID]*board.Ticket
+}
 
-// Board manages collections of tickets
-type Board struct {
-    Columns []Column
-    Tickets map[string]*Ticket
+// GlobalTicketStore aggregates tickets from all projects
+type GlobalTicketStore struct {
+    projects     map[string]*Project
+    ticketStores map[string]*TicketStore
+    allTickets   map[board.TicketID]*board.Ticket
 }
 ```
 
-### 3. Git Layer (`internal/git/`)
+### 3. Board Layer (`internal/board/`)
 
-Manages worktrees for isolated development:
+Ticket and column definitions:
 
 ```go
-type Manager struct {
-    repoRoot    string  // Root of main repository
-    worktreeDir string  // Where worktrees live (.worktrees/)
+type Ticket struct {
+    ID            TicketID     `json:"id"`
+    ProjectID     string       `json:"project_id"`
+    Title         string       `json:"title"`
+    Description   string       `json:"description,omitempty"`
+    Status        TicketStatus `json:"status"`
+    BranchName    string       `json:"branch_name,omitempty"`
+    BaseBranch    string       `json:"base_branch,omitempty"`
+    WorktreePath  string       `json:"worktree_path,omitempty"`
+    AgentType     string       `json:"agent_type,omitempty"`
+    AgentStatus   AgentStatus  `json:"agent_status,omitempty"`
+    CreatedAt     time.Time    `json:"created_at"`
+    UpdatedAt     time.Time    `json:"updated_at"`
 }
 
-// CreateWorktree creates an isolated worktree for a ticket
-func (m *Manager) CreateWorktree(ticket *core.Ticket) error {
-    // 1. Create branch: task/ticket-slug
-    branch := fmt.Sprintf("task/%s", ticket.Slug)
-    if err := m.createBranch(branch); err != nil {
-        return err
-    }
-    
-    // 2. Create worktree directory
-    worktreePath := filepath.Join(m.worktreeDir, ticket.Slug)
-    cmd := exec.Command("git", "worktree", "add", worktreePath, branch)
-    return cmd.Run()
-}
+type TicketStatus string
+const (
+    StatusBacklog    TicketStatus = "backlog"
+    StatusInProgress TicketStatus = "in_progress"
+    StatusDone       TicketStatus = "done"
+)
 
-// RemoveWorktree cleans up a ticket's worktree
-func (m *Manager) RemoveWorktree(ticket *core.Ticket) error {
-    cmd := exec.Command("git", "worktree", "remove", ticket.Worktree)
-    return cmd.Run()
-}
+type AgentStatus string
+const (
+    AgentNone      AgentStatus = ""
+    AgentIdle      AgentStatus = "idle"
+    AgentWorking   AgentStatus = "working"
+    AgentWaiting   AgentStatus = "waiting"
+    AgentCompleted AgentStatus = "completed"
+    AgentError     AgentStatus = "error"
+)
 ```
 
 ### 4. Terminal Layer (`internal/terminal/`)
 
-Embedded PTY-based terminal panes using `creack/pty` and `hinshun/vt10x`:
+Embedded PTY-based terminals using `creack/pty` and `hinshun/vt10x`:
 
 ```go
-// Pane represents an embedded terminal running an agent
 type Pane struct {
-	id      string
-	pty     *os.File
-	vt      *vt10x.VT
-	cmd     *exec.Cmd
-	workdir string
-	width   int
-	height  int
+    id      string
+    vt      vt10x.Terminal   // Virtual terminal state
+    pty     *os.File         // PTY file descriptor
+    cmd     *exec.Cmd
+    workdir string
+    width   int
+    height  int
 }
 
 // Start launches a command in the PTY
 func (p *Pane) Start(command string, args ...string) tea.Cmd {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = p.workdir
-	
-	pty, err := pty.Start(cmd)
-	if err != nil {
-		return nil
-	}
-	p.pty = pty
-	p.cmd = cmd
-	
-	// Start reading output and updating vt10x terminal
-	go p.readLoop()
-	return p.tick()
+    return func() tea.Msg {
+        p.vt = vt10x.New(vt10x.WithSize(p.width, p.height))
+        p.cmd = exec.Command(command, args...)
+        p.cmd.Dir = p.workdir
+        
+        ptmx, err := pty.Start(p.cmd)
+        if err != nil {
+            return ExitMsg{PaneID: p.id, Err: err}
+        }
+        p.pty = ptmx
+        
+        // Start reading from PTY
+        return p.readOutput()()
+    }
 }
 
-// HandleKey forwards keyboard input to the PTY
+// HandleKey converts Bubbletea key messages to PTY input
 func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
-	// Convert to escape sequence and write to PTY
-	p.pty.Write(keyToBytes(msg))
-	return nil
+    if msg.String() == "ctrl+g" {
+        return ExitFocusMsg{}  // Return to board
+    }
+    p.pty.Write(translateKey(msg))
+    return nil
 }
 
-// View renders the terminal content from vt10x
+// View renders the vt10x terminal buffer
 func (p *Pane) View() string {
-	return renderVT(p.vt, p.width, p.height)
+    // Render cells with colors from vt10x
 }
 ```
 
-### 5. Agent Layer (`internal/agent/`)
+### 5. Git Layer (`internal/git/`)
 
-Agent configuration and status polling (lifecycle managed by Terminal layer):
+Worktree management:
+
+```go
+type WorktreeManager struct {
+    project     *project.Project
+    repoPath    string
+    worktreeDir string
+}
+
+func (m *WorktreeManager) CreateWorktree(branchName, baseBranch string) (string, error) {
+    worktreePath := filepath.Join(m.worktreeDir, branchName)
+    
+    // git worktree add -b <branch> <path> <base>
+    cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
+    cmd.Dir = m.repoPath
+    return worktreePath, cmd.Run()
+}
+
+func (m *WorktreeManager) RemoveWorktree(path string) error {
+    cmd := exec.Command("git", "worktree", "remove", path)
+    cmd.Dir = m.repoPath
+    return cmd.Run()
+}
+```
+
+### 6. Agent Layer (`internal/agent/`)
+
+Agent configuration and context injection:
 
 ```go
 type Manager struct {
-	config *config.Config
+    config *config.Config
 }
 
-// GetAgentConfig returns config for an agent type
-func (m *Manager) GetAgentConfig(agentType string) (*config.AgentConfig, bool) {
-	cfg, ok := m.config.Agents[agentType]
-	return &cfg, ok
+// BuildContextPrompt creates the initial prompt for an agent
+func BuildContextPrompt(template string, ticket *board.Ticket) string {
+    // Replace {{.Title}}, {{.Description}}, {{.BranchName}}, etc.
 }
 
-// StatusPollInterval returns the configured polling interval
-func (m *Manager) StatusPollInterval() time.Duration {
-	return time.Duration(m.config.UI.RefreshInterval) * time.Second
-}
-```
-
-### 5. Store Layer (`internal/store/`)
-
-Persistence abstraction:
-
-```go
-type Store interface {
-    Load() (*core.Board, error)
-    Save(board *core.Board) error
-    Close() error
+// StatusDetector polls agent status
+type StatusDetector struct {
+    cache map[string]cachedStatus
 }
 
-// JSONStore implements Store with JSON file persistence
-type JSONStore struct {
-    path string
-}
-
-func (s *JSONStore) Load() (*core.Board, error) {
-    data, err := os.ReadFile(s.path)
-    if os.IsNotExist(err) {
-        return core.NewBoard(), nil
-    }
-    var board core.Board
-    return &board, json.Unmarshal(data, &board)
-}
-
-// SQLiteStore implements Store with SQLite (optional, for larger boards)
-type SQLiteStore struct {
-    db *sql.DB
+func (d *StatusDetector) DetectStatus(agentType, sessionID string, running bool) board.AgentStatus {
+    // Check status files, API endpoints, or process state
 }
 ```
 
@@ -253,181 +288,122 @@ User presses 'n'
        │
        ▼
 ┌──────────────┐
-│ Show Dialog  │ ← Dialog component renders
+│ Show Form    │ ← ModeCreateTicket
 └──────────────┘
        │
-       ▼ (user enters title, presses enter)
+       ▼ (user enters title, presses Enter)
 ┌──────────────┐
-│ Create Ticket│ ← core.NewTicket(title)
-└──────────────┘
-       │
-       ▼
-┌──────────────┐
-│ Save to Store│ ← store.Save(board)
+│ NewTicket()  │ ← board.NewTicket(title, projectID)
 └──────────────┘
        │
        ▼
 ┌──────────────┐
-│ Update Board │ ← Board re-renders with new ticket
+│ Add to Store │ ← globalStore.Add(ticket)
+└──────────────┘
+       │
+       ▼
+┌──────────────┐
+│ Save JSON    │ ← ticketStore.Save()
+└──────────────┘
+       │
+       ▼
+┌──────────────┐
+│ Update View  │ ← refreshColumnTickets()
 └──────────────┘
 ```
 
 ### Moving Ticket to "In Progress"
 
 ```
-User presses 'l' on backlog ticket
+User presses 'space' on backlog ticket
        │
        ▼
 ┌──────────────────┐
-│ Update Status    │ ← ticket.Status = StatusInProgress
+│ Check Worktree   │ ← ticket.WorktreePath == ""?
+└──────────────────┘
+       │ (no worktree)
+       ▼
+┌──────────────────┐
+│ Create Worktree  │ ← worktreeMgr.CreateWorktree()
 └──────────────────┘
        │
        ▼
 ┌──────────────────┐
-│ Create Worktree  │ ← git worktree add .worktrees/slug task/slug
+│ Update Status    │ ← globalStore.Move(id, StatusInProgress)
 └──────────────────┘
        │
        ▼
 ┌──────────────────┐
-│ Create PTY Pane  │ ← terminal.New() with PTY
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Start Agent      │ ← pane.Start("opencode") in worktree
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Save State       │ ← store.Save(board)
-└──────────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ Update UI        │ ← Ticket moves to "In Progress" column
+│ Save & Refresh   │ ← saveTicket(), refreshColumnTickets()
 └──────────────────┘
 ```
 
-### Opening a Ticket
+### Spawning Agent
 
 ```
-User presses 'enter' on ticket
+User presses 's' on in-progress ticket
        │
        ▼
 ┌──────────────────┐
-│ Focus Terminal   │ ← Switch to ModeAgentView
+│ Get Agent Config │ ← config.Agents[agentType]
 └──────────────────┘
        │
        ▼
 ┌──────────────────┐
-│ Show PTY Pane    │ ← Embedded terminal fills screen
+│ Create Pane      │ ← terminal.New(ticketID, width, height)
 └──────────────────┘
        │
-       ▼ (user presses Ctrl-O to exit focus)
+       ▼
 ┌──────────────────┐
-│ Return to Board  │ ← Switch back to ModeNormal
+│ Build Args       │ ← buildAgentArgs(cfg, ticket, isNewSession)
 └──────────────────┘
-```
-
-## Event System
-
-Bubbletea uses messages for all state changes:
-
-```go
-// Custom messages
-type TicketCreatedMsg struct{ Ticket *core.Ticket }
-type TicketMovedMsg struct{ Ticket *core.Ticket; From, To core.Status }
-type TicketDeletedMsg struct{ ID string }
-type AgentStatusMsg struct{ TicketID string; Status AgentStatus }
-type WorktreeCreatedMsg struct{ TicketID string; Path string }
-type ErrorMsg struct{ Err error }
-
-// Commands that produce messages
-func createTicketCmd(title string) tea.Cmd {
-    return func() tea.Msg {
-        ticket := core.NewTicket(title)
-        return TicketCreatedMsg{Ticket: ticket}
-    }
-}
-
-func pollAgentStatusCmd(ticketID string) tea.Cmd {
-    return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-        status := agentMgr.GetStatus(ticketID)
-        return AgentStatusMsg{TicketID: ticketID, Status: status}
-    })
-}
+       │
+       ▼
+┌──────────────────┐
+│ Start PTY        │ ← pane.Start(command, args...)
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│ Enter AgentView  │ ← mode = ModeAgentView
+└──────────────────┘
 ```
 
 ## Configuration
 
-```yaml
-# ~/.config/openkanban/config.yaml
+Stored in `~/.config/openkanban/config.json`:
 
-# UI settings
-theme: catppuccin-mocha  # or: catppuccin-latte, nord, dracula
-
-# Columns
-columns:
-  - name: Backlog
-    key: backlog
-    color: "#89b4fa"  # blue
-  - name: In Progress
-    key: in_progress
-    color: "#f9e2af"  # yellow
-    spawn_agent: true  # Auto-spawn when ticket enters
-  - name: Review
-    key: review
-    color: "#cba6f7"  # mauve
-  - name: Done
-    key: done
-    color: "#a6e3a1"  # green
-    cleanup_worktree: false  # Keep worktree on completion
-
-# Git settings
-git:
-  worktree_dir: .worktrees
-  branch_prefix: task/
-  auto_push: false
-
-# Agent settings
-default_agent: opencode
-
-agents:
-  opencode:
-    command: opencode
-    args: []
-    status_file: .opencode/status.json
-  claude:
-    command: claude
-    args: ["--dangerously-skip-permissions"]
-    status_file: .claude/status.json
-  aider:
-    command: aider
-    args: ["--yes"]
-
-# UI settings
-ui:
-  theme: catppuccin-mocha
-  refresh_interval: 5
-```
-
-## Error Handling
-
-Errors are surfaced through the message system:
-
-```go
-func (m Model) handleError(err error) (tea.Model, tea.Cmd) {
-    // Log error
-    log.Printf("Error: %v", err)
-    
-    // Show in status bar
-    m.statusMessage = fmt.Sprintf("Error: %v", err)
-    m.statusLevel = StatusError
-    
-    // Clear after 5 seconds
-    return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
-        return ClearStatusMsg{}
-    })
+```json
+{
+  "defaults": {
+    "default_agent": "opencode",
+    "branch_prefix": "task/",
+    "branch_template": "{prefix}{slug}",
+    "slug_max_length": 40,
+    "init_prompt": "..."
+  },
+  "agents": {
+    "opencode": {
+      "command": "opencode",
+      "args": [],
+      "status_file": ".opencode/status.json",
+      "init_prompt": "..."
+    },
+    "claude": {
+      "command": "claude",
+      "args": ["--dangerously-skip-permissions"],
+      "status_file": ".claude/status.json"
+    }
+  },
+  "ui": {
+    "theme": "catppuccin-mocha",
+    "show_agent_status": true,
+    "refresh_interval": 5
+  },
+  "cleanup": {
+    "delete_worktree": true,
+    "delete_branch": false
+  }
 }
 ```
 
@@ -435,67 +411,42 @@ func (m Model) handleError(err error) (tea.Model, tea.Cmd) {
 
 ```
 internal/
-├── core/
-│   ├── ticket.go
-│   └── ticket_test.go      # Unit tests for ticket logic
+├── board/
+│   ├── board.go
+│   └── board_test.go       # Ticket CRUD, slugify, status transitions
+├── config/
+│   ├── config.go
+│   └── config_test.go      # Config loading, defaults
+├── project/
+│   ├── store.go
+│   └── store_test.go       # Registry operations
 ├── git/
 │   ├── worktree.go
-│   └── worktree_test.go    # Integration tests (needs git)
-├── agent/
-│   ├── manager.go
-│   └── manager_test.go     # Integration tests (needs tmux)
-└── ui/
-    ├── board.go
-    └── board_test.go       # Snapshot tests for rendering
-```
-
-For UI testing, use Bubbletea's testing utilities:
-
-```go
-func TestBoardRender(t *testing.T) {
-    board := NewBoard()
-    board.AddTicket(core.NewTicket("Test ticket"))
-    
-    // Render and compare
-    got := board.View()
-    golden := loadGolden(t, "board_with_ticket.txt")
-    if got != golden {
-        t.Errorf("render mismatch:\n%s", diff(got, golden))
-    }
-}
+│   └── worktree_test.go    # Integration tests (requires git)
+└── agent/
+    ├── status.go
+    └── status_test.go      # Status detection logic
 ```
 
 ## Future Considerations
 
 ### Plugin System
-Allow custom agents via config:
+Custom agents via config with status detection:
 
-```yaml
-agents:
-  custom:
-    command: /path/to/my-agent
-    args: ["--mode", "interactive"]
-    status_command: "pgrep -f my-agent"
-```
-
-### Remote Agents
-SSH-based agent spawning for remote development:
-
-```yaml
-remotes:
-  dev-server:
-    host: dev.example.com
-    user: developer
-    worktree_dir: ~/worktrees
+```json
+{
+  "agents": {
+    "custom": {
+      "command": "/path/to/my-agent",
+      "args": ["--mode", "interactive"],
+      "status_command": "pgrep -f my-agent"
+    }
+  }
+}
 ```
 
 ### GitHub/GitLab Sync
-Bi-directional sync with issue trackers:
+Bi-directional sync with issue trackers.
 
-```yaml
-integrations:
-  github:
-    enabled: true
-    repo: owner/repo
-    sync_labels: true
-```
+### SQLite Backend
+Optional SQLite storage for large ticket counts.
