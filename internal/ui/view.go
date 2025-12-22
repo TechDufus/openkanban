@@ -211,15 +211,31 @@ func (m *Model) renderBoard() string {
 func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget bool, width int, isLast bool, ticketOffset int) string {
 	headerColor := lipgloss.Color(col.Color)
 
-	icon := "○"
+	columnIcons := map[board.TicketStatus]string{
+		board.StatusBacklog:    "📋",
+		board.StatusInProgress: "⚡",
+		board.StatusDone:       "✅",
+	}
+	icon := columnIcons[col.Status]
+	if icon == "" {
+		icon = "○"
+	}
 	if isActive {
-		icon = "●"
+		icon = "▸ " + icon
 	}
 
 	headerText := fmt.Sprintf("%s %s", icon, col.Name)
+
+	countStyle := lipgloss.NewStyle().Foreground(colorMuted)
 	countText := fmt.Sprintf("(%d)", len(tickets))
 	if col.Limit > 0 {
 		countText = fmt.Sprintf("(%d/%d)", len(tickets), col.Limit)
+		if len(tickets) >= col.Limit {
+			countStyle = lipgloss.NewStyle().
+				Foreground(colorBase).
+				Background(colorRed).
+				Padding(0, 1)
+		}
 	}
 
 	header := lipgloss.NewStyle().
@@ -227,9 +243,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 		Bold(true).
 		Render(headerText)
 
-	count := lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Render(" " + countText)
+	count := countStyle.Render(" " + countText)
 
 	headerLine := header + count
 
@@ -286,7 +300,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	border := columnBorder
 	borderColor := colorSurface
 	if isDragTarget {
-		border = columnBorderActive
+		border = dragTargetBorder
 		borderColor = colorGreen
 	} else if isActive {
 		border = columnBorderActive
@@ -451,6 +465,25 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	content := strings.Join(lines, "\n")
 
+	var accentColor lipgloss.Color = colorSurface
+	switch effectiveStatus {
+	case board.AgentWorking:
+		accentColor = colorYellow
+	case board.AgentWaiting:
+		accentColor = colorMauve
+	case board.AgentIdle:
+		if hasPane {
+			accentColor = colorBlue
+		}
+	case board.AgentCompleted:
+		accentColor = colorGreen
+	case board.AgentError:
+		accentColor = colorRed
+	}
+	if isRunning {
+		accentColor = colorGreen
+	}
+
 	border := ticketBorder
 	borderColor := colorSurface
 
@@ -466,6 +499,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	cardStyle := lipgloss.NewStyle().
 		Border(border).
 		BorderForeground(borderColor).
+		BorderLeftForeground(accentColor).
 		Padding(0, 1).
 		MarginBottom(1).
 		Width(width)
@@ -474,7 +508,31 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 }
 
 func (m *Model) renderStatusBar() string {
-	modeStr := modeStyle.Render(string(m.mode))
+	type modeConfig struct {
+		icon string
+		bg   lipgloss.Color
+	}
+	modeConfigs := map[Mode]modeConfig{
+		ModeNormal:       {"◆", colorBlue},
+		ModeInsert:       {"✎", colorGreen},
+		ModeCommand:      {":", colorMauve},
+		ModeCreateTicket: {"+", colorGreen},
+		ModeEditTicket:   {"✎", colorYellow},
+		ModeAgentView:    {"▶", colorTeal},
+		ModeSettings:     {"⚙", colorMauve},
+		ModeHelp:         {"?", colorBlue},
+		ModeConfirm:      {"!", colorRed},
+	}
+	cfg := modeConfigs[m.mode]
+	if cfg.bg == "" {
+		cfg = modeConfig{"◆", colorBlue}
+	}
+	modeStr := lipgloss.NewStyle().
+		Foreground(colorBase).
+		Background(cfg.bg).
+		Bold(true).
+		Padding(0, 1).
+		Render(cfg.icon + " " + string(m.mode))
 
 	sep := lipgloss.NewStyle().Foreground(colorOverlay).Render(" │ ")
 
@@ -882,6 +940,17 @@ var (
 		TopRight:    "┓",
 		BottomLeft:  "┗",
 		BottomRight: "┛",
+	}
+
+	dragTargetBorder = lipgloss.Border{
+		Top:         "═",
+		Bottom:      "═",
+		Left:        "║",
+		Right:       "║",
+		TopLeft:     "╔",
+		TopRight:    "╗",
+		BottomLeft:  "╚",
+		BottomRight: "╝",
 	}
 
 	ticketBorder = lipgloss.Border{
