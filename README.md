@@ -86,4 +86,4 @@ See [Configuration Guide](./docs/CONFIGURATION.md) for details.
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

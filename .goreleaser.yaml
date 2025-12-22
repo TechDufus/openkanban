@@ -57,7 +57,7 @@ brews:
       name: homebrew-tap
     homepage: https://github.com/TechDufus/openkanban
     description: TUI kanban board for orchestrating AI coding agents
-    license: MIT
+    license: AGPL-3.0
     install: |
       bin.install "openkanban"
     test: |
