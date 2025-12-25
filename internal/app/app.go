@@ -40,7 +40,14 @@ func Run(cfg *config.Config, filterPath string) error {
 	}
 
 	agentMgr := agent.NewManager(cfg)
-	model := ui.NewModel(cfg, globalStore, agentMgr, filterProjectID)
+
+	opencodeServer := agent.NewOpencodeServer(cfg)
+	if err := opencodeServer.Start(); err != nil {
+		return fmt.Errorf("failed to start opencode server: %w", err)
+	}
+	defer opencodeServer.Stop()
+
+	model := ui.NewModel(cfg, globalStore, agentMgr, opencodeServer, filterProjectID)
 
 	defer model.Cleanup()
 

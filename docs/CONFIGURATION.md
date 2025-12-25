@@ -43,6 +43,10 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
   },
   "behavior": {
     "confirm_quit_with_agents": true
+  },
+  "opencode": {
+    "server_enabled": true,
+    "server_port": 4096
   }
 }
 ```
@@ -136,6 +140,24 @@ Display preferences:
 ```
 
 - `sidebar_visible` - Show project sidebar on startup (default: true). Toggle with `[` key during use.
+
+## OpenCode Integration
+
+OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCode server and connects ticket terminals to it for accurate status detection.
+
+```json
+{
+  "opencode": {
+    "server_enabled": true,
+    "server_port": 4096
+  }
+}
+```
+
+- `server_enabled` - Start OpenCode server for enhanced status detection (default: true). When enabled, ticket terminals use `opencode attach` to connect to the shared server.
+- `server_port` - Port for the OpenCode server (default: 4096). If a server is already running on this port, OpenKanban will reuse it.
+
+When `server_enabled` is false, OpenCode runs in standalone mode per-ticket with basic status detection.
 
 ## Keybindings
 

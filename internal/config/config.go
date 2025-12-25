@@ -87,7 +87,14 @@ type Config struct {
 	UI       UIConfig               `json:"ui"`
 	Cleanup  CleanupSettings        `json:"cleanup"`
 	Behavior BehaviorSettings       `json:"behavior"`
+	Opencode OpencodeSettings       `json:"opencode"`
 	Keys     map[string]string      `json:"keys,omitempty"`
+}
+
+// OpencodeSettings controls OpenCode server integration
+type OpencodeSettings struct {
+	ServerEnabled bool `json:"server_enabled"` // Start opencode server for enhanced status detection
+	ServerPort    int  `json:"server_port"`    // Port for opencode server (default: 4096)
 }
 
 // BoardSettings contains default settings for boards
@@ -186,6 +193,10 @@ func DefaultConfig() *Config {
 		},
 		Behavior: BehaviorSettings{
 			ConfirmQuitWithAgents: true,
+		},
+		Opencode: OpencodeSettings{
+			ServerEnabled: true,
+			ServerPort:    4096,
 		},
 	}
 }

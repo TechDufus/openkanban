@@ -57,8 +57,9 @@ type Model struct {
 	columns         []board.Column
 	filterProjectID string
 
-	worktreeMgrs map[string]*git.WorktreeManager
-	agentMgr     *agent.Manager
+	worktreeMgrs   map[string]*git.WorktreeManager
+	agentMgr       *agent.Manager
+	opencodeServer *agent.OpencodeServer
 
 	mode          Mode
 	activeColumn  int
@@ -117,7 +118,7 @@ type Model struct {
 	sidebarWidth   int
 }
 
-func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, filterProjectID string) *Model {
+func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, opencodeServer *agent.OpencodeServer, filterProjectID string) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "Enter ticket title..."
 	ti.CharLimit = 100
@@ -181,6 +182,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		filterProjectID: filterProjectID,
 		worktreeMgrs:    worktreeMgrs,
 		agentMgr:        agentMgr,
+		opencodeServer:  opencodeServer,
 		mode:            ModeNormal,
 		titleInput:      ti,
 		descInput:       di,
@@ -1807,6 +1809,7 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 
 	mgr := m.worktreeMgrs[proj.ID]
 	cfg := m.config
+	opencodeServer := m.opencodeServer
 
 	return func() tea.Msg {
 		if worktreePath == "" {
@@ -1867,16 +1870,39 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 				}
 			}
 		case "opencode":
-			args = append([]string{worktreePath}, args...)
-			if isNewSession && promptTemplate != "" {
-				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
-				if prompt != "" {
-					args = append(args, "-p", prompt)
+			command := agentCfg.Command
+			if opencodeServer != nil && opencodeServer.IsRunning() {
+				command = "opencode"
+				args = []string{"attach", opencodeServer.URL(), "--dir", worktreePath}
+				if !isNewSession {
+					if sessionID := agent.FindOpencodeSession(worktreePath); sessionID != "" {
+						args = append(args, "--session", sessionID)
+					}
 				}
-			} else if !isNewSession {
-				if sessionID := agent.FindOpencodeSession(worktreePath); sessionID != "" {
-					args = append(args, "--session", sessionID)
+				if isNewSession && promptTemplate != "" {
+					prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+					if prompt != "" {
+						args = append(args, "-p", prompt)
+					}
 				}
+			} else {
+				args = append([]string{worktreePath}, args...)
+				if isNewSession && promptTemplate != "" {
+					prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+					if prompt != "" {
+						args = append(args, "-p", prompt)
+					}
+				} else if !isNewSession {
+					if sessionID := agent.FindOpencodeSession(worktreePath); sessionID != "" {
+						args = append(args, "--session", sessionID)
+					}
+				}
+			}
+			return spawnReadyMsg{
+				ticketID: ticketID,
+				pane:     pane,
+				command:  command,
+				args:     args,
 			}
 		}
 
