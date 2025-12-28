@@ -55,6 +55,7 @@ brews:
   - repository:
       owner: TechDufus
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/TechDufus/openkanban
     description: TUI kanban board for orchestrating AI coding agents
     license: AGPL-3.0
