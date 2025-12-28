@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -296,4 +298,55 @@ func (c *Config) Save(path string) error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+// LoadWithValidation loads config and returns structured validation result
+func LoadWithValidation(path string) (*Config, *ValidationResult, error) {
+	if path == "" {
+		var err error
+		path, err = ConfigPath()
+		if err != nil {
+			return DefaultConfig(), nil, nil
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			cfg := DefaultConfig()
+			return cfg, cfg.Validate(), nil
+		}
+		return nil, nil, err
+	}
+
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		result := &ValidationResult{}
+		if jsonErr := formatJSONError(err); jsonErr != "" {
+			result.AddError("json", "", jsonErr, nil)
+		} else {
+			result.AddError("json", "", err.Error(), nil)
+		}
+		return nil, result, err
+	}
+
+	cfg.mergeAgentDefaults()
+	result := cfg.Validate()
+
+	return cfg, result, nil
+}
+
+// formatJSONError attempts to provide better JSON error context
+func formatJSONError(err error) string {
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return fmt.Sprintf("invalid JSON at byte %d: %s", syntaxErr.Offset, syntaxErr.Error())
+	}
+
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Sprintf("field %q expects %s but got %s", typeErr.Field, typeErr.Type, typeErr.Value)
+	}
+
+	return ""
 }

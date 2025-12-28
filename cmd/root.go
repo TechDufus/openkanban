@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,9 +25,24 @@ multiple AI coding agents across different tasks and git worktrees.
 Each ticket spawns an embedded terminal pane with its own git worktree
 for safe parallel development.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(cfgFile)
+		cfg, result, err := config.LoadWithValidation(cfgFile)
 		if err != nil {
+			if result != nil && result.HasErrors() {
+				fmt.Fprintf(os.Stderr, "Configuration errors:\n\n%s", result.FormatErrors())
+				fmt.Fprintln(os.Stderr, "Run 'openkanban config validate' for details")
+				return errors.New("invalid configuration")
+			}
 			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		if result != nil && result.HasErrors() {
+			fmt.Fprintf(os.Stderr, "Configuration errors:\n\n%s", result.FormatErrors())
+			fmt.Fprintln(os.Stderr, "Run 'openkanban config validate' for details")
+			return errors.New("invalid configuration")
+		}
+
+		if result != nil && result.HasWarnings() {
+			fmt.Fprintf(os.Stderr, "Config warnings:\n%s\n", result.FormatWarnings())
 		}
 
 		return app.Run(cfg, projectPath)
@@ -56,8 +72,12 @@ var newCmd = &cobra.Command{
 			name = args[0]
 		}
 
-		cfg, err := config.Load(cfgFile)
-		if err != nil {
+		cfg, result, err := config.LoadWithValidation(cfgFile)
+		if err != nil || (result != nil && result.HasErrors()) {
+			if result != nil && result.HasErrors() {
+				fmt.Fprintf(os.Stderr, "Configuration errors:\n\n%s", result.FormatErrors())
+				return errors.New("invalid configuration")
+			}
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 

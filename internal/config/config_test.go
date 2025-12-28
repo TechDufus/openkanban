@@ -369,3 +369,109 @@ func TestUIConfigDefaults(t *testing.T) {
 		t.Errorf("UI.RefreshInterval = %d; want positive value", cfg.UI.RefreshInterval)
 	}
 }
+
+func TestLoadWithValidation_ValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	cfg := DefaultConfig()
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	loaded, result, err := LoadWithValidation(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithValidation() error: %v", err)
+	}
+
+	if loaded == nil {
+		t.Error("LoadWithValidation() should return config")
+	}
+
+	if result == nil {
+		t.Error("LoadWithValidation() should return validation result")
+	}
+
+	if result.HasErrors() {
+		t.Errorf("valid config should not have errors:\n%s", result.FormatErrors())
+	}
+}
+
+func TestLoadWithValidation_InvalidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	if err := os.WriteFile(configPath, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_, result, err := LoadWithValidation(configPath)
+	if err == nil {
+		t.Error("LoadWithValidation() should return error for invalid JSON")
+	}
+
+	if result == nil {
+		t.Error("LoadWithValidation() should return validation result for JSON errors")
+	}
+
+	if !result.HasErrors() {
+		t.Error("validation result should have errors for invalid JSON")
+	}
+}
+
+func TestLoadWithValidation_NonExistentFile(t *testing.T) {
+	cfg, result, err := LoadWithValidation("/nonexistent/path/config.json")
+	if err != nil {
+		t.Fatalf("LoadWithValidation() error: %v", err)
+	}
+
+	if cfg == nil {
+		t.Error("LoadWithValidation() should return default config when file not found")
+	}
+
+	if result == nil {
+		t.Error("LoadWithValidation() should return validation result")
+	}
+}
+
+func TestLoadWithValidation_InvalidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	invalidConfig := map[string]interface{}{
+		"defaults": map[string]interface{}{
+			"branch_naming": "invalid-value",
+		},
+		"agents": map[string]interface{}{
+			"bad": map[string]interface{}{
+				"command": "",
+			},
+		},
+	}
+
+	data, err := json.Marshal(invalidConfig)
+	if err != nil {
+		t.Fatalf("failed to marshal test config: %v", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, result, err := LoadWithValidation(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithValidation() unexpected error: %v", err)
+	}
+
+	if cfg == nil {
+		t.Error("LoadWithValidation() should return config even with validation errors")
+	}
+
+	if result == nil {
+		t.Fatal("LoadWithValidation() should return validation result")
+	}
+
+	if !result.HasErrors() {
+		t.Error("validation result should have errors for invalid config")
+	}
+}
