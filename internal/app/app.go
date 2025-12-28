@@ -54,7 +54,7 @@ func Run(cfg *config.Config, filterPath string) error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM)
 
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
 
 	go func() {
 		<-sigChan

@@ -708,6 +708,10 @@ func (m *Model) hitTest(x, y int) (column, ticket int) {
 		return -1, -1
 	}
 
+	if m.sidebarVisible {
+		x = x - m.sidebarWidth - 1
+	}
+
 	headerHeight := 2
 	if y < headerHeight {
 		return -1, -1
