@@ -194,6 +194,7 @@ func (m *Model) renderBoard() string {
 		isActive := i == m.activeColumn && !m.sidebarFocused
 		isLast := i == endCol-1
 		isDragTarget := m.dragging && i == m.dragTargetColumn && i != m.dragSourceColumn
+		isHovered := i == m.hoverColumn && !m.dragging
 
 		colWidth := baseWidth
 		if i-startCol < remainder {
@@ -205,7 +206,7 @@ func (m *Model) renderBoard() string {
 			ticketOffset = m.columnOffsets[i]
 		}
 
-		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, colWidth, isLast, ticketOffset))
+		columns = append(columns, m.renderColumn(col, m.columnTickets[i], isActive, isDragTarget, isHovered, colWidth, isLast, ticketOffset))
 	}
 
 	if endCol < len(m.columns) {
@@ -221,7 +222,7 @@ func (m *Model) renderBoard() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 }
 
-func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget bool, width int, isLast bool, ticketOffset int) string {
+func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive, isDragTarget, isHovered bool, width int, isLast bool, ticketOffset int) string {
 	headerColor := lipgloss.Color(col.Color)
 
 	columnIcons := map[board.TicketStatus]string{
@@ -280,7 +281,8 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	for i := ticketOffset; i < endIdx; i++ {
 		ticket := tickets[i]
 		isSelected := isActive && i == m.activeTicket
-		ticketViews = append(ticketViews, m.renderTicket(ticket, isSelected, width-4, col.Color))
+		isTicketHovered := isHovered && i == m.hoverTicket
+		ticketViews = append(ticketViews, m.renderTicket(ticket, isSelected, isTicketHovered, width-4, col.Color))
 	}
 
 	if hasMoreBelow {
@@ -318,6 +320,8 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	} else if isActive {
 		border = columnBorderActive
 		borderColor = headerColor
+	} else if isHovered {
+		borderColor = colorOverlay
 	}
 
 	style := lipgloss.NewStyle().
@@ -333,7 +337,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	return style.Render(content)
 }
 
-func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, columnColor string) string {
+func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, width int, columnColor string) string {
 	pane, hasPane := m.panes[ticket.ID]
 	isRunning := hasPane && pane.Running()
 
@@ -490,6 +494,10 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	border := ticketBorder
 	borderColor := colorSurface
+
+	if isHovered && !isSelected {
+		borderColor = colorOverlay
+	}
 
 	if isSelected {
 		border = ticketBorderSelected

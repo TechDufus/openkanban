@@ -77,6 +77,9 @@ type Model struct {
 	dragSourceTicket int
 	dragTargetColumn int
 
+	hoverColumn int
+	hoverTicket int
+
 	columnTickets [][]*board.Ticket
 
 	showHelp    bool
@@ -199,6 +202,8 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		selectedProject: selectedProject,
 		sidebarVisible:  cfg.UI.SidebarVisible,
 		sidebarWidth:    24,
+		hoverColumn:     -1,
+		hoverTicket:     -1,
 	}
 	m.refreshColumnTickets()
 	return m
@@ -640,6 +645,15 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if col >= 0 {
 				m.dragTargetColumn = col
 			}
+		} else {
+			if m.sidebarVisible && msg.X < m.sidebarWidth {
+				m.hoverColumn = -1
+				m.hoverTicket = -1
+			} else {
+				col, ticket := m.hitTest(msg.X, msg.Y)
+				m.hoverColumn = col
+				m.hoverTicket = ticket
+			}
 		}
 
 	case tea.MouseActionRelease:
@@ -650,6 +664,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.dragging = false
 			m.dragTargetColumn = 0
 		}
+		col, ticket := m.hitTest(msg.X, msg.Y)
+		m.hoverColumn = col
+		m.hoverTicket = ticket
 
 	default:
 		switch msg.Button {
