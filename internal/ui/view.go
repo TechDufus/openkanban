@@ -124,9 +124,9 @@ func (m *Model) renderHeader() string {
 
 		if waitingCount > 0 {
 			bgColor = colorMauve
-			statusText = fmt.Sprintf("◐ %d waiting", waitingCount)
+			statusText = fmt.Sprintf("%s %d waiting", m.waitingSpinner.View(), waitingCount)
 			if workingCount > 0 {
-				statusText = fmt.Sprintf("◐ %d waiting, %d working", waitingCount, workingCount)
+				statusText = fmt.Sprintf("%s %d waiting, %d working", m.waitingSpinner.View(), waitingCount, workingCount)
 			}
 		} else if workingCount > 0 {
 			bgColor = colorYellow
@@ -362,7 +362,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	case board.AgentWaiting:
 		sessionBadge = lipgloss.NewStyle().
 			Foreground(colorMauve).
-			Render("◐")
+			Render(m.waitingSpinner.View())
 	case board.AgentIdle:
 		if hasPane {
 			sessionBadge = lipgloss.NewStyle().
@@ -431,7 +431,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 			statusText = "working"
 			statusColor = colorYellow
 		case board.AgentWaiting:
-			statusIcon = "◐"
+			statusIcon = m.waitingSpinner.View()
 			statusText = "waiting"
 			statusColor = colorMauve
 		case board.AgentCompleted:

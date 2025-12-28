@@ -63,14 +63,15 @@ type Model struct {
 	agentMgr       *agent.Manager
 	opencodeServer *agent.OpencodeServer
 
-	mode          Mode
-	activeColumn  int
-	activeTicket  int
-	width         int
-	height        int
-	spinner       spinner.Model
-	scrollOffset  int
-	columnOffsets []int
+	mode           Mode
+	activeColumn   int
+	activeTicket   int
+	width          int
+	height         int
+	spinner        spinner.Model
+	waitingSpinner spinner.Model
+	scrollOffset   int
+	columnOffsets  []int
 
 	dragging         bool
 	dragSourceColumn int
@@ -164,6 +165,13 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	sp.Spinner = spinner.Meter
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1"))
 
+	wsp := spinner.New()
+	wsp.Spinner = spinner.Spinner{
+		Frames: []string{"◐", "◓", "◑", "◒"},
+		FPS:    4,
+	}
+	wsp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7"))
+
 	worktreeMgrs := make(map[string]*git.WorktreeManager)
 	for _, p := range globalStore.Projects() {
 		worktreeMgrs[p.ID] = git.NewWorktreeManager(p)
@@ -197,6 +205,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		filterInput:     fi,
 		addProjectPath:  ap,
 		spinner:         sp,
+		waitingSpinner:  wsp,
 		panes:           make(map[board.TicketID]*terminal.Pane),
 		statusDetector:  agent.NewStatusDetector(),
 		selectedProject: selectedProject,
@@ -213,6 +222,7 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickAgentStatus(m.agentMgr.StatusPollInterval()),
 		m.spinner.Tick,
+		m.waitingSpinner.Tick,
 	)
 }
 
@@ -222,9 +232,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case shutdownCompleteMsg:
 			return m, tea.Quit
 		case spinner.TickMsg:
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
+			var spinnerCmd, waitingCmd tea.Cmd
+			m.spinner, spinnerCmd = m.spinner.Update(msg)
+			m.waitingSpinner, waitingCmd = m.waitingSpinner.Update(msg)
+			return m, tea.Batch(spinnerCmd, waitingCmd)
 		}
 		return m, nil
 	}
@@ -281,9 +292,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case spinner.TickMsg:
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
+			var spinnerCmd, waitingCmd tea.Cmd
+			m.spinner, spinnerCmd = m.spinner.Update(msg)
+			m.waitingSpinner, waitingCmd = m.waitingSpinner.Update(msg)
+			return m, tea.Batch(spinnerCmd, waitingCmd)
 
 		case tea.KeyMsg:
 			if msg.String() == "esc" {
@@ -373,9 +385,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		var spinnerCmd, waitingCmd tea.Cmd
+		m.spinner, spinnerCmd = m.spinner.Update(msg)
+		m.waitingSpinner, waitingCmd = m.waitingSpinner.Update(msg)
+		return m, tea.Batch(spinnerCmd, waitingCmd)
 
 	case notificationMsg:
 		if time.Since(m.notifyTime) > 3*time.Second {
