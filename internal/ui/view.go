@@ -714,11 +714,19 @@ func (m *Model) renderTicketForm() string {
 	labelStyle := lipgloss.NewStyle().Foreground(colorSubtext)
 	activeLabelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
 	lockedStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 
 	titleLabel := labelStyle
 	descLabel := labelStyle
 	branchLabel := labelStyle
 	projectLabel := labelStyle
+
+	fieldHints := map[int]string{
+		formFieldTitle:       "Short summary of the task (required)",
+		formFieldDescription: "Additional context, acceptance criteria, notes",
+		formFieldBranch:      "Git branch name for this work",
+		formFieldProject:     "Repository where this ticket lives",
+	}
 
 	switch m.ticketFormField {
 	case formFieldTitle:
@@ -734,7 +742,7 @@ func (m *Model) renderTicketForm() string {
 	var branchField string
 	if m.branchLocked {
 		branchLabel = lockedStyle
-		branchField = lockedStyle.Render(m.branchInput.Value() + " (locked)")
+		branchField = lockedStyle.Render(m.branchInput.Value() + " (locked - worktree exists)")
 	} else {
 		branchField = m.branchInput.View()
 	}
@@ -767,20 +775,44 @@ func (m *Model) renderTicketForm() string {
 
 	content := titleStyle.Render("◈ "+formTitle) + "\n\n" +
 		titleFocus + titleLabel.Render("Title") + "  " + titleCharStyle.Render(titleCharCount) + "\n" +
-		"  " + m.titleInput.View() + "\n\n" +
-		descFocus + descLabel.Render("Description") + "\n" +
-		"  " + m.descInput.View() + "\n\n" +
-		branchFocus + branchLabel.Render("Branch") + "\n" +
+		"  " + m.titleInput.View() + "\n"
+
+	if m.ticketFormField == formFieldTitle {
+		content += "  " + hintStyle.Render(fieldHints[formFieldTitle]) + "\n"
+	}
+	content += "\n"
+
+	content += descFocus + descLabel.Render("Description") + "\n" +
+		"  " + m.descInput.View() + "\n"
+
+	if m.ticketFormField == formFieldDescription {
+		content += "  " + hintStyle.Render(fieldHints[formFieldDescription]) + "\n"
+	}
+	content += "\n"
+
+	content += branchFocus + branchLabel.Render("Branch") + "\n" +
 		"  " + branchField + "\n"
+
+	if m.ticketFormField == formFieldBranch && !m.branchLocked {
+		content += "  " + hintStyle.Render(fieldHints[formFieldBranch]) + "\n"
+	}
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
 			"  " + projectField + "\n"
+
+		if m.ticketFormField == formFieldProject && !m.showAddProjectForm {
+			content += "  " + hintStyle.Render(fieldHints[formFieldProject]) + "\n"
+		}
 	}
 
-	content += "\n  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Switch    ") +
-		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"    ") +
+	content += "\n  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Next field  ") +
+		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"  ") +
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
+
+	if m.ticketFormField == formFieldTitle {
+		content += "\n  " + hintStyle.Render("Tip: Press Enter to save quickly")
+	}
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -816,8 +848,18 @@ func (m *Model) renderSettingsView() string {
 		Foreground(colorMauve).
 		Bold(true)
 
+	hintStyle := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Italic(true)
+
+	settingsDescriptions := map[string]string{
+		"filter_project": "Show only tickets from this project on the board",
+	}
+
 	var lines []string
-	lines = append(lines, titleStyle.Render("◈ Global Settings"))
+	lines = append(lines, titleStyle.Render("◈ Settings"))
+	lines = append(lines, "")
+	lines = append(lines, dimStyle.Render("  Configure board view and behavior"))
 	lines = append(lines, "")
 
 	for i, field := range settingsFields {
@@ -826,8 +868,9 @@ func (m *Model) renderSettingsView() string {
 
 		switch field.key {
 		case "filter_project":
+			projectCount := len(m.globalStore.Projects())
 			if m.filterProjectID == "" {
-				value = "All Projects"
+				value = fmt.Sprintf("All Projects (%d)", projectCount)
 			} else if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
 				value = p.Name
 			}
@@ -845,16 +888,25 @@ func (m *Model) renderSettingsView() string {
 
 		line := cursor + lStyle.Render(fmt.Sprintf("%-18s", label)) + " " + vStyle.Render(value)
 		lines = append(lines, line)
+
+		if i == m.settingsIndex {
+			if desc, ok := settingsDescriptions[field.key]; ok {
+				lines = append(lines, "    "+hintStyle.Render(desc))
+			}
+		}
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" Open search  ")+
+	lines = append(lines, dimStyle.Render("  ─────────────────────────────────────"))
+	lines = append(lines, "")
+	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("j/k")+dimStyle.Render(" Navigate  ")+
+		lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" Edit  ")+
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Close"))
 
 	content := strings.Join(lines, "\n")
 
 	return lipgloss.NewStyle().
-		Border(columnBorder).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorMauve).
 		Padding(1, 2).
 		Render(content)
@@ -1161,9 +1213,9 @@ func (m *Model) renderSidebar() string {
 
 	hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	if m.sidebarFocused {
-		lines = append(lines, hintStyle.Render("  j/k ⏎select l→exit"))
+		lines = append(lines, hintStyle.Render("  j/k navigate  Enter select  l→board"))
 	} else {
-		lines = append(lines, hintStyle.Render("  h→focus  [hide"))
+		lines = append(lines, hintStyle.Render("  h→focus  [ toggle sidebar"))
 	}
 
 	content := strings.Join(lines, "\n")

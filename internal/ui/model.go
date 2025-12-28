@@ -345,7 +345,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.focusedPane == board.TicketID(msg.PaneID) {
 			m.mode = ModeNormal
 			m.focusedPane = ""
-			m.notify("Agent exited")
+			m.notify("Agent session ended")
 		}
 		return m, nil
 
@@ -1100,7 +1100,7 @@ func (m *Model) createProjectFromPath() (tea.Model, tea.Cmd) {
 
 	gitDir := filepath.Join(absPath, ".git")
 	if _, err := os.Stat(gitDir); err != nil {
-		m.notify("Not a git repository")
+		m.notify("Not a git repository (no .git directory)")
 		return m, nil
 	}
 
@@ -1192,12 +1192,12 @@ func (m *Model) focusCurrentField() {
 func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 	title := strings.TrimSpace(m.titleInput.Value())
 	if title == "" {
-		m.notify("Title cannot be empty")
+		m.notify("Title is required")
 		return m, nil
 	}
 
 	if m.selectedProject == nil {
-		m.notify("No project selected")
+		m.notify("Select a project first")
 		return m, nil
 	}
 
@@ -1559,7 +1559,7 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 	ticket := m.selectedTicket()
 	if ticket == nil {
-		m.notify("No ticket selected")
+		m.notify("Select a ticket first")
 		return m, nil
 	}
 
@@ -1583,13 +1583,13 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 func (m *Model) attachToAgent() (tea.Model, tea.Cmd) {
 	ticket := m.selectedTicket()
 	if ticket == nil {
-		m.notify("No ticket selected")
+		m.notify("Select a ticket first")
 		return m, nil
 	}
 
 	pane, ok := m.panes[ticket.ID]
 	if !ok || !pane.Running() {
-		m.notify("No active agent for this ticket")
+		m.notify("No agent running - press 's' to spawn")
 		return m, nil
 	}
 
@@ -1665,7 +1665,7 @@ func (m *Model) performTicketCleanup(ticket *board.Ticket) {
 	m.globalStore.Delete(ticket.ID)
 	m.refreshColumnTickets()
 	m.globalStore.SaveAll()
-	m.notify("Deleted ticket")
+	m.notify("Ticket deleted")
 }
 
 func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
@@ -1782,18 +1782,18 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	}
 
 	if ticket.Status != board.StatusInProgress {
-		m.notify("Move ticket to In Progress first")
+		m.notify("Move ticket to 'In Progress' first (Space)")
 		return m, nil
 	}
 
 	if _, exists := m.panes[ticket.ID]; exists {
-		m.notify("Agent already running")
+		m.notify("Agent already active - press Enter to attach")
 		return m, nil
 	}
 
 	proj := m.globalStore.GetProjectForTicket(ticket)
 	if proj == nil {
-		m.notify("Project not found")
+		m.notify("Ticket has no associated project")
 		return m, nil
 	}
 
@@ -1803,7 +1803,7 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	}
 	agentCfg, ok := m.config.Agents[agentType]
 	if !ok {
-		m.notify("Unknown agent: " + agentType)
+		m.notify("Agent '" + agentType + "' not configured in config.json")
 		return m, nil
 	}
 
