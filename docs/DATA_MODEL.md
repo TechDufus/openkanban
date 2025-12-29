@@ -1,6 +1,6 @@
 # Data Model & Persistence
 
-This document defines the data structures, persistence strategies, and state management for Agent Board.
+This document defines the data structures, persistence strategies, and state management for OpenKanban.
 
 ## Core Data Structures
 
@@ -33,6 +33,7 @@ const (
 
 type Ticket struct {
     ID          TicketID     `json:"id"`
+    ProjectID   string       `json:"project_id"`
     Title       string       `json:"title"`
     Description string       `json:"description,omitempty"`
     Status      TicketStatus `json:"status"`
@@ -42,10 +43,11 @@ type Ticket struct {
     BranchName   string `json:"branch_name,omitempty"`
     BaseBranch   string `json:"base_branch,omitempty"` // e.g., "main"
     
-    // Agent integration
-    AgentType    string      `json:"agent_type,omitempty"` // "claude", "opencode", "aider"
-    AgentStatus  AgentStatus `json:"agent_status"`
-    TmuxSession  string      `json:"tmux_session,omitempty"`
+    // Agent integration (embedded PTY terminals, not tmux)
+    AgentType      string      `json:"agent_type,omitempty"` // "claude", "opencode", "aider"
+    AgentStatus    AgentStatus `json:"agent_status"`
+    AgentSpawnedAt *time.Time  `json:"agent_spawned_at,omitempty"`
+    AgentPort      int         `json:"agent_port,omitempty"` // Per-ticket opencode port
     
     // Metadata
     CreatedAt   time.Time  `json:"created_at"`
@@ -60,43 +62,43 @@ type Ticket struct {
 }
 ```
 
-### Board
+### Project
 
-Container for tickets with board-level configuration.
+A Project represents a registered git repository. Each git repo is one Project.
 
 ```go
-type Board struct {
-    ID        string    `json:"id"`
-    Name      string    `json:"name"`
-    RepoPath  string    `json:"repo_path"`  // Absolute path to git repo
-    CreatedAt time.Time `json:"created_at"`
-    UpdatedAt time.Time `json:"updated_at"`
-    
-    // Columns (ordered)
-    Columns []Column `json:"columns"`
-    
-    // All tickets (keyed by ID for fast lookup)
-    Tickets map[TicketID]*Ticket `json:"tickets"`
-    
-    // Board settings
-    Settings BoardSettings `json:"settings"`
+type Project struct {
+    ID          string          `json:"id"`
+    Name        string          `json:"name"`
+    RepoPath    string          `json:"repo_path"`    // Absolute path to git repo root
+    WorktreeDir string          `json:"worktree_dir"` // Where worktrees go (default: {repo}-worktrees)
+    CreatedAt   time.Time       `json:"created_at"`
+    UpdatedAt   time.Time       `json:"updated_at"`
+    Settings    ProjectSettings `json:"settings"`
 }
 
+type ProjectSettings struct {
+    DefaultAgent     string `json:"default_agent,omitempty"`
+    AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
+    AutoCreateBranch bool   `json:"auto_create_branch"`
+    BranchPrefix     string `json:"branch_prefix,omitempty"`
+    BranchNaming     string `json:"branch_naming,omitempty"`   // "template" | "ai" | "prompt"
+    BranchTemplate   string `json:"branch_template,omitempty"` // e.g., "{prefix}{slug}"
+    SlugMaxLength    int    `json:"slug_max_length,omitempty"` // default: 40
+}
+```
+
+### Column
+
+Columns define the board layout and map to ticket statuses.
+
+```go
 type Column struct {
     ID     string       `json:"id"`
     Name   string       `json:"name"`
     Status TicketStatus `json:"status"` // Maps to ticket status
     Color  string       `json:"color"`  // Hex color for column header
     Limit  int          `json:"limit"`  // WIP limit (0 = unlimited)
-}
-
-type BoardSettings struct {
-    DefaultAgent     string `json:"default_agent"`      // Default agent to spawn
-    WorktreeBase     string `json:"worktree_base"`      // Base dir for worktrees
-    AutoSpawnAgent   bool   `json:"auto_spawn_agent"`   // Spawn agent on move to in_progress
-    AutoCreateBranch bool   `json:"auto_create_branch"` // Create branch on move to in_progress
-    BranchPrefix     string `json:"branch_prefix"`      // e.g., "agent/" or "feature/"
-    TmuxPrefix       string `json:"tmux_prefix"`        // e.g., "ab-" for session names
 }
 ```
 
@@ -139,66 +141,72 @@ const (
 
 ## Persistence Strategy
 
-### File-Based Storage (Default)
+### File-Based Storage
 
-Simple JSON files, human-readable and git-friendly.
+OpenKanban uses a multi-file JSON storage approach:
 
 ```
 ~/.config/openkanban/
 ├── config.json           # Global configuration
-└── boards/
-    └── {board-id}/
-        ├── board.json    # Board metadata + settings
-        └── tickets/
-            ├── {ticket-id}.json
-            └── ...
+└── projects.json         # Project registry (all registered projects)
 
-# Or single-file approach (simpler):
-~/.config/openkanban/
-├── config.json
-└── boards/
-    └── {board-id}.json   # Everything in one file
+{repo}/.openkanban/
+└── tickets.json          # Tickets for this specific project
 ```
 
-#### Single-File Format (Recommended for <1000 tickets)
+### Project Registry Format
+
+Stored in `~/.config/openkanban/projects.json`:
 
 ```json
 {
-  "id": "proj-abc123",
-  "name": "My Project",
-  "repo_path": "/home/user/projects/myproject",
-  "created_at": "2025-01-15T10:00:00Z",
-  "updated_at": "2025-01-16T14:30:00Z",
-  "columns": [
-    {"id": "backlog", "name": "Backlog", "status": "backlog", "color": "#89b4fa", "limit": 0},
-    {"id": "in-progress", "name": "In Progress", "status": "in_progress", "color": "#f9e2af", "limit": 3},
-    {"id": "done", "name": "Done", "status": "done", "color": "#a6e3a1", "limit": 0}
-  ],
+  "projects": {
+    "proj-uuid-1": {
+      "id": "proj-uuid-1",
+      "name": "My Project",
+      "repo_path": "/home/user/projects/myproject",
+      "worktree_dir": "/home/user/projects/myproject-worktrees",
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-16T14:30:00Z",
+      "settings": {
+        "default_agent": "opencode",
+        "auto_spawn_agent": true,
+        "auto_create_branch": true,
+        "branch_prefix": "task/",
+        "branch_naming": "template",
+        "branch_template": "{prefix}{slug}",
+        "slug_max_length": 40
+      }
+    }
+  }
+}
+```
+
+### Per-Project Tickets Format
+
+Stored in `{repo}/.openkanban/tickets.json`:
+
+```json
+{
   "tickets": {
     "ticket-uuid-1": {
       "id": "ticket-uuid-1",
+      "project_id": "proj-uuid-1",
       "title": "Implement user authentication",
       "description": "Add JWT-based auth to the API",
       "status": "in_progress",
-      "worktree_path": "/home/user/projects/myproject-worktrees/auth-feature",
-      "branch_name": "agent/auth-feature",
-      "agent_type": "claude",
+      "worktree_path": "/home/user/projects/myproject-worktrees/task-implement-user-authentication",
+      "branch_name": "task/implement-user-authentication",
+      "base_branch": "main",
+      "agent_type": "opencode",
       "agent_status": "working",
-      "tmux_session": "ab-ticket-uuid-1",
+      "agent_port": 4097,
       "created_at": "2025-01-15T10:30:00Z",
       "updated_at": "2025-01-16T14:30:00Z",
       "started_at": "2025-01-16T09:00:00Z",
       "labels": ["backend", "security"],
       "priority": 1
     }
-  },
-  "settings": {
-    "default_agent": "claude",
-    "worktree_base": "/home/user/projects/myproject-worktrees",
-    "auto_spawn_agent": true,
-    "auto_create_branch": true,
-    "branch_prefix": "agent/",
-    "tmux_prefix": "ab-"
   }
 }
 ```
@@ -308,9 +316,9 @@ type TicketFilter struct {
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │                   IN PROGRESS                             │
-│  - Worktree created at {worktree_base}/{branch_name}     │
-│  - Branch created: {branch_prefix}{ticket-id-short}      │
-│  - Tmux session: {tmux_prefix}{ticket-id}                │
+│  - Worktree created at {worktree_dir}/{branch_name}      │
+│  - Branch created: {branch_prefix}{slug}                 │
+│  - Embedded PTY terminal with agent process              │
 │  - agent_status cycles: idle → working → waiting → ...   │
 └──────────────────────┬───────────────────────────────────┘
                        │ Move to Done
@@ -362,40 +370,65 @@ type TicketFilter struct {
     Error states:
     - Process exits unexpectedly → "error"
     - Status file says "done" → "completed"
-    - Session killed → "none"
+    - PTY process killed → "none"
 ```
 
 ## Global Configuration
 
 ```go
 type Config struct {
-    // Default board settings
-    Defaults BoardSettings `json:"defaults"`
-    
-    // Agent configurations
-    Agents map[string]AgentConfig `json:"agents"`
-    
-    // UI preferences
-    UI UIConfig `json:"ui"`
-    
-    // Keybindings (optional overrides)
-    Keys map[string]string `json:"keys,omitempty"`
+    Defaults BoardSettings          `json:"defaults"`
+    Agents   map[string]AgentConfig `json:"agents"`
+    UI       UIConfig               `json:"ui"`
+    Cleanup  CleanupSettings        `json:"cleanup"`
+    Behavior BehaviorSettings       `json:"behavior"`
+    Opencode OpencodeSettings       `json:"opencode"`
+    Keys     map[string]string      `json:"keys,omitempty"`
+}
+
+type BoardSettings struct {
+    DefaultAgent     string `json:"default_agent"`
+    WorktreeBase     string `json:"worktree_base"`
+    AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
+    AutoCreateBranch bool   `json:"auto_create_branch"`
+    BranchPrefix     string `json:"branch_prefix"`
+    BranchNaming     string `json:"branch_naming"`   // "template" | "ai" | "prompt"
+    BranchTemplate   string `json:"branch_template"` // e.g., "{prefix}{slug}"
+    SlugMaxLength    int    `json:"slug_max_length"` // default: 40
+    InitPrompt       string `json:"init_prompt"`
 }
 
 type AgentConfig struct {
-    Command     string            `json:"command"`      // e.g., "claude"
-    Args        []string          `json:"args"`         // e.g., ["--dangerously-skip-permissions"]
-    Env         map[string]string `json:"env"`          // Additional env vars
-    StatusFile  string            `json:"status_file"`  // Relative path to status file
-    InitPrompt  string            `json:"init_prompt"`  // Template for initial prompt
+    Command    string            `json:"command"`
+    Args       []string          `json:"args"`
+    Env        map[string]string `json:"env"`
+    StatusFile string            `json:"status_file"`
+    InitPrompt string            `json:"init_prompt"`
 }
 
 type UIConfig struct {
-    Theme           string `json:"theme"`            // "catppuccin-mocha", "dracula", etc.
+    Theme           string `json:"theme"`
     ShowAgentStatus bool   `json:"show_agent_status"`
-    RefreshInterval int    `json:"refresh_interval"` // Seconds between agent status polls
-    ColumnWidth     int    `json:"column_width"`     // Characters
-    TicketHeight    int    `json:"ticket_height"`    // Lines per ticket card
+    RefreshInterval int    `json:"refresh_interval"`
+    ColumnWidth     int    `json:"column_width"`
+    TicketHeight    int    `json:"ticket_height"`
+    SidebarVisible  bool   `json:"sidebar_visible"`
+}
+
+type CleanupSettings struct {
+    DeleteWorktree       bool `json:"delete_worktree"`
+    DeleteBranch         bool `json:"delete_branch"`
+    ForceWorktreeRemoval bool `json:"force_worktree_removal"`
+}
+
+type BehaviorSettings struct {
+    ConfirmQuitWithAgents bool `json:"confirm_quit_with_agents"`
+}
+
+type OpencodeSettings struct {
+    ServerEnabled bool `json:"server_enabled"`
+    ServerPort    int  `json:"server_port"`
+    PollInterval  int  `json:"poll_interval"`
 }
 ```
 
@@ -404,34 +437,33 @@ type UIConfig struct {
 ```json
 {
   "defaults": {
-    "default_agent": "claude",
+    "default_agent": "opencode",
     "worktree_base": "",
     "auto_spawn_agent": true,
     "auto_create_branch": true,
-    "branch_prefix": "agent/",
-    "tmux_prefix": "ab-"
+    "branch_prefix": "task/",
+    "branch_naming": "template",
+    "branch_template": "{prefix}{slug}",
+    "slug_max_length": 40
   },
   "agents": {
     "claude": {
       "command": "claude",
       "args": ["--dangerously-skip-permissions"],
       "env": {},
-      "status_file": ".claude/status.json",
-      "init_prompt": "You are working on: {{.Title}}\n\nDescription:\n{{.Description}}\n\nBranch: {{.BranchName}}\nBase: {{.BaseBranch}}"
+      "status_file": ".claude/status.json"
     },
     "opencode": {
       "command": "opencode",
       "args": [],
       "env": {},
-      "status_file": ".opencode/status.json",
-      "init_prompt": "Task: {{.Title}}\n\n{{.Description}}"
+      "status_file": ".opencode/status.json"
     },
     "aider": {
       "command": "aider",
       "args": ["--yes"],
       "env": {},
-      "status_file": "",
-      "init_prompt": ""
+      "status_file": ""
     }
   },
   "ui": {
@@ -439,7 +471,21 @@ type UIConfig struct {
     "show_agent_status": true,
     "refresh_interval": 5,
     "column_width": 40,
-    "ticket_height": 4
+    "ticket_height": 4,
+    "sidebar_visible": true
+  },
+  "cleanup": {
+    "delete_worktree": true,
+    "delete_branch": false,
+    "force_worktree_removal": false
+  },
+  "behavior": {
+    "confirm_quit_with_agents": true
+  },
+  "opencode": {
+    "server_enabled": true,
+    "server_port": 4096,
+    "poll_interval": 1
   }
 }
 ```
@@ -449,17 +495,17 @@ type UIConfig struct {
 | Purpose | Path | Notes |
 |---------|------|-------|
 | Global config | `~/.config/openkanban/config.json` | User preferences |
-| Board data | `~/.config/openkanban/boards/{id}.json` | Per-board state |
-| Worktrees | `{repo}/../{repo}-worktrees/` | Default location |
-| Agent status | `{worktree}/.claude/status.json` | Agent-specific |
-| Logs | `~/.local/state/openkanban/logs/` | Debug logs |
+| Project registry | `~/.config/openkanban/projects.json` | All registered projects |
+| Project tickets | `{repo}/.openkanban/tickets.json` | Per-project ticket storage |
+| Worktrees | `{repo}-worktrees/` | Default sibling to repo |
+| Status cache | `~/.cache/openkanban-status/` | Agent status files |
 
 ## Concurrency Considerations
 
-1. **File locking**: Use `flock` or similar when writing board JSON
+1. **File locking**: Use `flock` or similar when writing JSON files
 2. **Atomic writes**: Write to temp file, then rename
 3. **Agent polling**: Run in separate goroutine, update state via channels
-4. **Tmux operations**: Serial execution to avoid race conditions
+4. **PTY operations**: Terminal panes managed per-ticket with mutex protection
 
 ```go
 // Atomic write pattern

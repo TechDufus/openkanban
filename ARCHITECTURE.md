@@ -55,11 +55,13 @@ openkanban/
 │   ├── agent/
 │   │   ├── agent.go         # Agent manager
 │   │   ├── context.go       # Ticket context injection
+│   │   ├── server.go        # OpenCode server integration
 │   │   └── status.go        # Agent status detection
 │   ├── git/worktree.go      # Git worktree operations
 │   └── config/config.go     # Configuration loading
 ├── docs/
 │   ├── AGENT_INTEGRATION.md
+│   ├── CONFIGURATION.md
 │   ├── DATA_MODEL.md
 │   └── UI_DESIGN.md
 ├── go.mod
@@ -106,6 +108,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 - `ModeAgentView` - Full-screen embedded terminal
 - `ModeSettings` - Settings panel
 - `ModeHelp` - Help overlay
+- `ModeFilter` - Search/filter tickets
+- `ModeSpawning` - Agent spawn in progress
+- `ModeShuttingDown` - Application shutdown with cleanup
+- `ModeConfirm` - Confirmation dialog
 
 ### 2. Project Layer (`internal/project/`)
 
@@ -171,7 +177,7 @@ const (
 
 type AgentStatus string
 const (
-    AgentNone      AgentStatus = ""
+    AgentNone      AgentStatus = "none"
     AgentIdle      AgentStatus = "idle"
     AgentWorking   AgentStatus = "working"
     AgentWaiting   AgentStatus = "waiting"
@@ -402,7 +408,16 @@ Stored in `~/.config/openkanban/config.json`:
   },
   "cleanup": {
     "delete_worktree": true,
-    "delete_branch": false
+    "delete_branch": false,
+    "force_worktree_removal": false
+  },
+  "behavior": {
+    "confirm_quit_with_agents": true
+  },
+  "opencode": {
+    "server_enabled": true,
+    "server_port": 4096,
+    "poll_interval": 1
   }
 }
 ```

@@ -72,10 +72,12 @@ openkanban
 
 | Key | Action |
 |-----|--------|
+| `j/k` | Navigate tickets up/down |
+| `h/l` | Navigate between columns |
+| `space` | Move ticket to next column |
 | `n` | New ticket |
 | `s` | Spawn agent |
 | `enter` | Attach to agent |
-| `h/l` | Move ticket between columns |
 | `?` | Full help |
 
 ## Configuration

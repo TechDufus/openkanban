@@ -9,6 +9,7 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
   "defaults": {
     "default_agent": "opencode",
     "branch_prefix": "task/",
+    "branch_naming": "template",
     "branch_template": "{prefix}{slug}",
     "slug_max_length": 40,
     "auto_spawn_agent": true,
@@ -17,11 +18,13 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
   "agents": {
     "opencode": {
       "command": "opencode",
-      "args": []
+      "args": [],
+      "status_file": ".opencode/status.json"
     },
     "claude": {
       "command": "claude",
-      "args": ["--dangerously-skip-permissions"]
+      "args": ["--dangerously-skip-permissions"],
+      "status_file": ".claude/status.json"
     },
     "aider": {
       "command": "aider",
@@ -46,7 +49,8 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
   },
   "opencode": {
     "server_enabled": true,
-    "server_port": 4096
+    "server_port": 4096,
+    "poll_interval": 1
   }
 }
 ```
@@ -149,13 +153,15 @@ OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCo
 {
   "opencode": {
     "server_enabled": true,
-    "server_port": 4096
+    "server_port": 4096,
+    "poll_interval": 1
   }
 }
 ```
 
 - `server_enabled` - Start OpenCode server for enhanced status detection (default: true). When enabled, ticket terminals use `opencode attach` to connect to the shared server.
 - `server_port` - Port for the OpenCode server (default: 4096). If a server is already running on this port, OpenKanban will reuse it.
+- `poll_interval` - Agent status polling interval in seconds (default: 1).
 
 When `server_enabled` is false, OpenCode runs in standalone mode per-ticket with basic status detection.
 
@@ -171,6 +177,8 @@ All keybindings are shown in-app with `?`. Custom keybindings coming soon.
 |-----|--------|
 | `j/k` | Move cursor up/down |
 | `h/l` | Move between columns |
+| `g` | Go to first ticket |
+| `G` | Go to last ticket |
 | `space` | Move ticket to next column |
 | `-` | Move ticket to previous column |
 | `enter` | Attach to running agent |
@@ -179,8 +187,11 @@ All keybindings are shown in-app with `?`. Custom keybindings coming soon.
 | `s` | Spawn agent for ticket |
 | `S` | Stop agent |
 | `d` | Delete ticket |
-| `p` | Cycle project filter |
-| `[` | Toggle sidebar |
+| `/` | Search/filter tickets |
+| `esc` | Clear filter |
+| `tab` | Toggle sidebar focus |
+| `[` | Toggle sidebar visibility |
+| `O` | Open settings |
 | `?` | Show help |
 | `q` | Quit |
 
