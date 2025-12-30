@@ -77,3 +77,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag ${{ steps.version.outputs.new_tag }}
           git push origin ${{ steps.version.outputs.new_tag }}
+
+      - name: Trigger release workflow
+        if: steps.check-tag.outputs.tagged == 'false' && steps.check-changes.outputs.changed == 'true'
+        run: |
+          gh workflow run release.yaml --field tag=${{ steps.version.outputs.new_tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

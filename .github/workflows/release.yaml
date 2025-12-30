@@ -7,20 +7,24 @@ on:
   workflow_dispatch:
     inputs:
       version_type:
-        description: 'Version bump type'
-        required: true
+        description: 'Version bump type (ignored if tag provided)'
+        required: false
         type: choice
         options:
           - patch
           - minor
           - major
+      tag:
+        description: 'Existing tag to release (skips tag creation)'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   create-tag:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.tag == ''
     runs-on: ubuntu-latest
     outputs:
       new_tag: ${{ steps.version.outputs.new_tag }}
@@ -66,13 +70,13 @@ jobs:
     needs: [create-tag]
     if: |
       always() && 
-      (github.event_name == 'push' || needs.create-tag.result == 'success')
+      (github.event_name == 'push' || needs.create-tag.result == 'success' || inputs.tag != '')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.create-tag.outputs.new_tag || github.ref }}
+          ref: ${{ inputs.tag || needs.create-tag.outputs.new_tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
