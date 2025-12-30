@@ -165,6 +165,43 @@ func (m *WorktreeManager) DeleteBranch(branchName string) error {
 	return nil
 }
 
+func (m *WorktreeManager) BranchExists(branchName string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", branchName)
+	cmd.Dir = m.repoPath
+	return cmd.Run() == nil
+}
+
+func (m *WorktreeManager) CreateBranch(branchName, baseBranch string) error {
+	cmd := exec.Command("git", "branch", branchName, baseBranch)
+	cmd.Dir = m.repoPath
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create branch: %s: %w", string(output), err)
+	}
+
+	return nil
+}
+
+func (m *WorktreeManager) CheckoutBranch(branchName string) error {
+	cmd := exec.Command("git", "checkout", branchName)
+	cmd.Dir = m.repoPath
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to checkout branch: %s: %w", string(output), err)
+	}
+
+	return nil
+}
+
+func (m *WorktreeManager) SetupBranch(branchName, baseBranch string) error {
+	if !m.BranchExists(branchName) {
+		if err := m.CreateBranch(branchName, baseBranch); err != nil {
+			return err
+		}
+	}
+	return m.CheckoutBranch(branchName)
+}
+
 func (m *WorktreeManager) HasUncommittedChanges(worktreePath string) (bool, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = worktreePath

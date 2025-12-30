@@ -52,7 +52,8 @@ const (
 	formFieldBranch      = 2
 	formFieldLabels      = 3
 	formFieldPriority    = 4
-	formFieldProject     = 5
+	formFieldWorktree    = 5
+	formFieldProject     = 6
 )
 
 type Model struct {
@@ -95,6 +96,7 @@ type Model struct {
 	branchInput        textinput.Model
 	labelsInput        textinput.Model
 	ticketPriority     int
+	ticketUseWorktree  bool
 	projectInput       textinput.Model
 	ticketFormField    int
 	editingTicketID    board.TicketID
@@ -810,10 +812,18 @@ func (m *Model) dropTicket() (tea.Model, tea.Cmd) {
 	targetStatus := m.columns[m.dragTargetColumn].Status
 
 	if targetStatus == board.StatusInProgress && ticket.WorktreePath == "" {
-		if err := m.setupWorktree(ticket); err != nil {
-			m.notify("Worktree failed: " + err.Error())
-			m.dragging = false
-			return m, nil
+		if ticket.UseWorktree {
+			if err := m.setupWorktree(ticket); err != nil {
+				m.notify("Worktree failed: " + err.Error())
+				m.dragging = false
+				return m, nil
+			}
+		} else {
+			if err := m.setupMainRepoBranch(ticket); err != nil {
+				m.notify("Branch setup failed: " + err.Error())
+				m.dragging = false
+				return m, nil
+			}
 		}
 	}
 
@@ -1056,6 +1066,8 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		m.labelsInput, cmd = m.labelsInput.Update(msg)
 	case formFieldPriority:
 		cmd = m.handlePriorityNav(msg)
+	case formFieldWorktree:
+		cmd = m.handleWorktreeToggle(msg)
 	case formFieldProject:
 		if m.showAddProjectForm {
 			m.addProjectPath, cmd = m.addProjectPath.Update(msg)
@@ -1080,6 +1092,18 @@ func (m *Model) handlePriorityNav(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "1", "2", "3", "4", "5":
 		m.ticketPriority = int(msg.String()[0] - '0')
+	}
+	return nil
+}
+
+func (m *Model) handleWorktreeToggle(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case " ", "enter", "h", "l", "left", "right":
+		m.ticketUseWorktree = !m.ticketUseWorktree
+	case "y", "Y":
+		m.ticketUseWorktree = true
+	case "n", "N":
+		m.ticketUseWorktree = false
 	}
 	return nil
 }
@@ -1195,7 +1219,7 @@ func (m *Model) nextFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField++
 
-	maxField := formFieldPriority
+	maxField := formFieldWorktree
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1217,7 +1241,7 @@ func (m *Model) prevFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField--
 
-	maxField := formFieldPriority
+	maxField := formFieldWorktree
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1255,6 +1279,8 @@ func (m *Model) focusCurrentField() {
 		m.labelsInput.Focus()
 	case formFieldPriority:
 		break
+	case formFieldWorktree:
+		break
 	case formFieldProject:
 		m.projectInput.Focus()
 	}
@@ -1290,6 +1316,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 			}
 			ticket.Labels = labels
 			ticket.Priority = m.ticketPriority
+			ticket.UseWorktree = m.ticketUseWorktree
 			ticket.Touch()
 			m.saveTicket(ticket)
 			m.refreshColumnTickets()
@@ -1301,6 +1328,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		ticket.BranchName = branchName
 		ticket.Labels = labels
 		ticket.Priority = m.ticketPriority
+		ticket.UseWorktree = m.ticketUseWorktree
 		ticket.Status = m.columns[m.activeColumn].Status
 		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
@@ -1737,6 +1765,7 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.branchInput.Reset()
 	m.labelsInput.Reset()
 	m.ticketPriority = 3
+	m.ticketUseWorktree = true
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -1766,6 +1795,7 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 	if m.ticketPriority < 1 || m.ticketPriority > 5 {
 		m.ticketPriority = 3
 	}
+	m.ticketUseWorktree = ticket.UseWorktree
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -1873,9 +1903,16 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 	}
 
 	if nextStatus == board.StatusInProgress && ticket.WorktreePath == "" {
-		if err := m.setupWorktree(ticket); err != nil {
-			m.notify("Worktree failed: " + err.Error())
-			return m, nil
+		if ticket.UseWorktree {
+			if err := m.setupWorktree(ticket); err != nil {
+				m.notify("Worktree failed: " + err.Error())
+				return m, nil
+			}
+		} else {
+			if err := m.setupMainRepoBranch(ticket); err != nil {
+				m.notify("Branch setup failed: " + err.Error())
+				return m, nil
+			}
 		}
 	}
 
@@ -1928,6 +1965,26 @@ func (m *Model) setupWorktree(ticket *board.Ticket) error {
 	}
 
 	ticket.WorktreePath = path
+	ticket.BranchName = branchName
+	ticket.BaseBranch = baseBranch
+	return nil
+}
+
+func (m *Model) setupMainRepoBranch(ticket *board.Ticket) error {
+	proj := m.globalStore.GetProjectForTicket(ticket)
+	if proj == nil {
+		return fmt.Errorf("project not found for ticket")
+	}
+
+	mgr := m.worktreeMgrs[proj.ID]
+	if mgr == nil {
+		return fmt.Errorf("worktree manager not found")
+	}
+
+	branchName := m.generateBranchName(ticket, proj)
+	baseBranch, _ := mgr.GetDefaultBranch()
+
+	ticket.WorktreePath = proj.RepoPath
 	ticket.BranchName = branchName
 	ticket.BaseBranch = baseBranch
 	return nil
@@ -1990,6 +2047,22 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if !ticket.UseWorktree {
+		for otherID := range m.panes {
+			if otherID == ticket.ID {
+				continue
+			}
+			other, _ := m.globalStore.Get(otherID)
+			if other != nil && !other.UseWorktree {
+				otherProj := m.globalStore.GetProjectForTicket(other)
+				if otherProj != nil && otherProj.ID == proj.ID {
+					m.notify("Another main-repo agent is running in this project")
+					return m, nil
+				}
+			}
+		}
+	}
+
 	agentType := proj.Settings.DefaultAgent
 	if agentType == "" {
 		agentType = m.config.Defaults.DefaultAgent
@@ -2012,6 +2085,7 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 	worktreePath := ticket.WorktreePath
 	branchName := ticket.BranchName
 	baseBranch := ticket.BaseBranch
+	useWorktree := ticket.UseWorktree
 	width, height := m.width, m.height-2
 
 	agentType := agentCfg.Command
@@ -2031,34 +2105,41 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 	opencodeServer := m.opencodeServer
 
 	return func() tea.Msg {
-		if worktreePath == "" {
-			if mgr == nil {
-				return spawnErrorMsg{ticketID: ticketID, err: "worktree manager not found"}
-			}
-
-			generatedBranch := branchName
-			if generatedBranch == "" {
-				maxLen := proj.GetSlugMaxLength()
-				slug := board.Slugify(ticket.Title, maxLen)
-				template := proj.GetBranchTemplate()
-				prefix := proj.GetBranchPrefix()
-				generatedBranch = strings.ReplaceAll(template, "{prefix}", prefix)
-				generatedBranch = strings.ReplaceAll(generatedBranch, "{slug}", slug)
-			}
-
-			base, _ := mgr.GetDefaultBranch()
-			if baseBranch != "" {
-				base = baseBranch
-			}
-
-			path, err := mgr.CreateWorktree(generatedBranch, base)
-			if err != nil {
-				return spawnErrorMsg{ticketID: ticketID, err: "worktree failed: " + err.Error()}
-			}
-			worktreePath = path
-			branchName = generatedBranch
-			baseBranch = base
+		if mgr == nil {
+			return spawnErrorMsg{ticketID: ticketID, err: "worktree manager not found"}
 		}
+
+		generatedBranch := branchName
+		if generatedBranch == "" {
+			maxLen := proj.GetSlugMaxLength()
+			slug := board.Slugify(ticket.Title, maxLen)
+			template := proj.GetBranchTemplate()
+			prefix := proj.GetBranchPrefix()
+			generatedBranch = strings.ReplaceAll(template, "{prefix}", prefix)
+			generatedBranch = strings.ReplaceAll(generatedBranch, "{slug}", slug)
+		}
+
+		base, _ := mgr.GetDefaultBranch()
+		if baseBranch != "" {
+			base = baseBranch
+		}
+
+		if useWorktree {
+			if worktreePath == "" {
+				path, err := mgr.CreateWorktree(generatedBranch, base)
+				if err != nil {
+					return spawnErrorMsg{ticketID: ticketID, err: "worktree failed: " + err.Error()}
+				}
+				worktreePath = path
+			}
+		} else {
+			if err := mgr.SetupBranch(generatedBranch, base); err != nil {
+				return spawnErrorMsg{ticketID: ticketID, err: "branch setup failed: " + err.Error()}
+			}
+			worktreePath = proj.RepoPath
+		}
+		branchName = generatedBranch
+		baseBranch = base
 
 		pane := terminal.New(string(ticketID), width, height)
 		pane.SetWorkdir(worktreePath)

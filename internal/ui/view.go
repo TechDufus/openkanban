@@ -809,6 +809,7 @@ func (m *Model) renderTicketForm() string {
 	branchLabel := labelStyle
 	labelsLabel := labelStyle
 	priorityLabel := labelStyle
+	worktreeLabel := labelStyle
 	projectLabel := labelStyle
 
 	switch m.ticketFormField {
@@ -822,6 +823,8 @@ func (m *Model) renderTicketForm() string {
 		labelsLabel = activeLabelStyle
 	case formFieldPriority:
 		priorityLabel = activeLabelStyle
+	case formFieldWorktree:
+		worktreeLabel = activeLabelStyle
 	case formFieldProject:
 		projectLabel = activeLabelStyle
 	}
@@ -838,6 +841,7 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	priorityField := m.renderPrioritySelector()
+	worktreeField := m.renderWorktreeSelector()
 	projectField := m.renderProjectSelector()
 
 	titleCharCount := fmt.Sprintf("%d/100", len(m.titleInput.Value()))
@@ -852,7 +856,7 @@ func (m *Model) renderTicketForm() string {
 	focusIndicator := lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
 	noFocus := "  "
 
-	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
+	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
 	switch m.ticketFormField {
 	case formFieldTitle:
 		titleFocus = focusIndicator
@@ -864,6 +868,8 @@ func (m *Model) renderTicketForm() string {
 		labelsFocus = focusIndicator
 	case formFieldPriority:
 		priorityFocus = focusIndicator
+	case formFieldWorktree:
+		worktreeFocus = focusIndicator
 	case formFieldProject:
 		projectFocus = focusIndicator
 	}
@@ -883,7 +889,10 @@ func (m *Model) renderTicketForm() string {
 		"  " + m.labelsInput.View() + "\n\n" +
 		priorityFocus + priorityLabel.Render("Priority") + "\n" +
 		"  " + descriptionStyle.Render("1 = highest, 5 = lowest") + "\n" +
-		"  " + priorityField + "\n"
+		"  " + priorityField + "\n\n" +
+		worktreeFocus + worktreeLabel.Render("Worktree") + "\n" +
+		"  " + descriptionStyle.Render("Use isolated worktree or work in main repo") + "\n" +
+		"  " + worktreeField + "\n"
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
@@ -932,6 +941,29 @@ func (m *Model) renderPrioritySelector() string {
 	}
 
 	return strings.Join(parts, "  ") + hint
+}
+
+func (m *Model) renderWorktreeSelector() string {
+	worktreeStyle := lipgloss.NewStyle().Foreground(colorGreen)
+	mainRepoStyle := lipgloss.NewStyle().Foreground(colorYellow)
+
+	var worktreeOption, mainOption string
+	if m.ticketUseWorktree {
+		worktreeStyle = worktreeStyle.Bold(true).Background(colorSurface).Padding(0, 1)
+		worktreeOption = worktreeStyle.Render("● Worktree")
+		mainOption = mainRepoStyle.Render("○ Main Repo")
+	} else {
+		mainRepoStyle = mainRepoStyle.Bold(true).Background(colorSurface).Padding(0, 1)
+		worktreeOption = worktreeStyle.Render("○ Worktree")
+		mainOption = mainRepoStyle.Render("● Main Repo")
+	}
+
+	hint := ""
+	if m.ticketFormField == formFieldWorktree {
+		hint = "  " + dimStyle.Render("Space to toggle")
+	}
+
+	return worktreeOption + "  " + mainOption + hint
 }
 
 func (m *Model) renderWithOverlay(overlay string) string {

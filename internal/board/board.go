@@ -73,6 +73,7 @@ type Ticket struct {
 	Description string       `json:"description,omitempty"`
 	Status      TicketStatus `json:"status"`
 
+	UseWorktree  bool   `json:"use_worktree"`
 	WorktreePath string `json:"worktree_path,omitempty"`
 	BranchName   string `json:"branch_name,omitempty"`
 	BaseBranch   string `json:"base_branch,omitempty"`
@@ -100,6 +101,7 @@ func NewTicket(title, projectID string) *Ticket {
 		Title:       title,
 		Status:      StatusBacklog,
 		AgentStatus: AgentNone,
+		UseWorktree: true,
 		Priority:    3,
 		CreatedAt:   now,
 		UpdatedAt:   now,
