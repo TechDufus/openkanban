@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -82,6 +83,25 @@ Branch: {{.BranchName}} (from {{.BaseBranch}})
 
 This is your assigned task. Implement what the description specifies.`
 
+// AgentPriority defines the order in which agents are preferred when auto-detecting.
+// The first available agent in this list becomes the default.
+var AgentPriority = []string{"opencode", "claude", "aider"}
+
+// DetectAvailableAgent returns the first agent from the priority list
+// whose command is available in PATH. Falls back to the first priority
+// agent if none are found (user may install later).
+func DetectAvailableAgent(agents map[string]AgentConfig) string {
+	for _, name := range AgentPriority {
+		if agent, exists := agents[name]; exists {
+			if _, err := exec.LookPath(agent.Command); err == nil {
+				return name
+			}
+		}
+	}
+	// Fallback to first in priority list
+	return AgentPriority[0]
+}
+
 // Config holds the global application configuration
 type Config struct {
 	Defaults BoardSettings          `json:"defaults"`
@@ -144,11 +164,38 @@ type BehaviorSettings struct {
 	ConfirmQuitWithAgents bool `json:"confirm_quit_with_agents"` // Prompt before quitting with running agents
 }
 
+func defaultAgents() map[string]AgentConfig {
+	return map[string]AgentConfig{
+		"claude": {
+			Command:    "claude",
+			Args:       []string{"--dangerously-skip-permissions"},
+			Env:        map[string]string{},
+			StatusFile: ".claude/status.json",
+			InitPrompt: defaultClaudePrompt,
+		},
+		"opencode": {
+			Command:    "opencode",
+			Args:       []string{},
+			Env:        map[string]string{},
+			StatusFile: ".opencode/status.json",
+			InitPrompt: defaultOpencodePrompt,
+		},
+		"aider": {
+			Command:    "aider",
+			Args:       []string{"--yes"},
+			Env:        map[string]string{},
+			StatusFile: "",
+			InitPrompt: defaultAiderPrompt,
+		},
+	}
+}
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
+	agents := defaultAgents()
 	return &Config{
 		Defaults: BoardSettings{
-			DefaultAgent:     "opencode",
+			DefaultAgent:     DetectAvailableAgent(agents),
 			WorktreeBase:     "",
 			AutoSpawnAgent:   true,
 			AutoCreateBranch: true,
@@ -158,29 +205,7 @@ func DefaultConfig() *Config {
 			SlugMaxLength:    40,
 			InitPrompt:       defaultGlobalPrompt,
 		},
-		Agents: map[string]AgentConfig{
-			"claude": {
-				Command:    "claude",
-				Args:       []string{"--dangerously-skip-permissions"},
-				Env:        map[string]string{},
-				StatusFile: ".claude/status.json",
-				InitPrompt: defaultClaudePrompt,
-			},
-			"opencode": {
-				Command:    "opencode",
-				Args:       []string{},
-				Env:        map[string]string{},
-				StatusFile: ".opencode/status.json",
-				InitPrompt: defaultOpencodePrompt,
-			},
-			"aider": {
-				Command:    "aider",
-				Args:       []string{"--yes"},
-				Env:        map[string]string{},
-				StatusFile: "",
-				InitPrompt: defaultAiderPrompt,
-			},
-		},
+		Agents: agents,
 		UI: UIConfig{
 			Theme:           "catppuccin-mocha",
 			ShowAgentStatus: true,

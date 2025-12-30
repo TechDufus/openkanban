@@ -10,8 +10,10 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Defaults.DefaultAgent != "opencode" {
-		t.Errorf("Defaults.DefaultAgent = %q; want %q", cfg.Defaults.DefaultAgent, "opencode")
+	// DefaultAgent should be one of the known agents (auto-detected based on availability)
+	knownAgents := map[string]bool{"opencode": true, "claude": true, "aider": true}
+	if !knownAgents[cfg.Defaults.DefaultAgent] {
+		t.Errorf("Defaults.DefaultAgent = %q; want one of opencode, claude, aider", cfg.Defaults.DefaultAgent)
 	}
 
 	if cfg.Defaults.BranchPrefix != "task/" {
@@ -367,6 +369,82 @@ func TestUIConfigDefaults(t *testing.T) {
 
 	if cfg.UI.RefreshInterval <= 0 {
 		t.Errorf("UI.RefreshInterval = %d; want positive value", cfg.UI.RefreshInterval)
+	}
+}
+
+func TestDetectAvailableAgent(t *testing.T) {
+	t.Run("returns first available agent by priority", func(t *testing.T) {
+		agents := map[string]AgentConfig{
+			"opencode": {Command: "go"},
+			"claude":   {Command: "go"},
+			"aider":    {Command: "go"},
+		}
+		result := DetectAvailableAgent(agents)
+		if result != "opencode" {
+			t.Errorf("DetectAvailableAgent() = %q; want %q (first in priority)", result, "opencode")
+		}
+	})
+
+	t.Run("skips unavailable agents", func(t *testing.T) {
+		agents := map[string]AgentConfig{
+			"opencode": {Command: "nonexistent-binary-12345"},
+			"claude":   {Command: "go"},
+			"aider":    {Command: "go"},
+		}
+		result := DetectAvailableAgent(agents)
+		if result != "claude" {
+			t.Errorf("DetectAvailableAgent() = %q; want %q (second in priority)", result, "claude")
+		}
+	})
+
+	t.Run("falls back to first priority when none available", func(t *testing.T) {
+		agents := map[string]AgentConfig{
+			"opencode": {Command: "nonexistent-binary-12345"},
+			"claude":   {Command: "nonexistent-binary-67890"},
+			"aider":    {Command: "nonexistent-binary-abcde"},
+		}
+		result := DetectAvailableAgent(agents)
+		if result != "opencode" {
+			t.Errorf("DetectAvailableAgent() = %q; want %q (fallback)", result, "opencode")
+		}
+	})
+
+	t.Run("handles missing agent configs", func(t *testing.T) {
+		agents := map[string]AgentConfig{
+			"claude": {Command: "go"},
+		}
+		result := DetectAvailableAgent(agents)
+		if result != "claude" {
+			t.Errorf("DetectAvailableAgent() = %q; want %q", result, "claude")
+		}
+	})
+
+	t.Run("handles empty agent map", func(t *testing.T) {
+		agents := map[string]AgentConfig{}
+		result := DetectAvailableAgent(agents)
+		if result != "opencode" {
+			t.Errorf("DetectAvailableAgent() = %q; want %q (fallback)", result, "opencode")
+		}
+	})
+}
+
+func TestAgentPriority(t *testing.T) {
+	if len(AgentPriority) == 0 {
+		t.Error("AgentPriority should not be empty")
+	}
+
+	if AgentPriority[0] != "opencode" {
+		t.Errorf("AgentPriority[0] = %q; want %q", AgentPriority[0], "opencode")
+	}
+
+	expected := []string{"opencode", "claude", "aider"}
+	if len(AgentPriority) != len(expected) {
+		t.Errorf("AgentPriority has %d items; want %d", len(AgentPriority), len(expected))
+	}
+	for i, name := range expected {
+		if AgentPriority[i] != name {
+			t.Errorf("AgentPriority[%d] = %q; want %q", i, AgentPriority[i], name)
+		}
 	}
 }
 
