@@ -1,6 +1,6 @@
 module github.com/techdufus/openkanban
 
-go 1.23
+go 1.23.0
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
