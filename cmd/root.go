@@ -45,7 +45,7 @@ for safe parallel development.`,
 			fmt.Fprintf(os.Stderr, "Config warnings:\n%s\n", result.FormatWarnings())
 		}
 
-		return app.Run(cfg, projectPath)
+		return app.Run(cfg, projectPath, Version)
 	},
 }
 

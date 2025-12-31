@@ -19,6 +19,7 @@ import (
 	"github.com/techdufus/openkanban/internal/git"
 	"github.com/techdufus/openkanban/internal/project"
 	"github.com/techdufus/openkanban/internal/terminal"
+	"github.com/techdufus/openkanban/internal/update"
 )
 
 const agentPortBase = 4097
@@ -123,14 +124,15 @@ type Model struct {
 	filterInput textinput.Model
 	filterQuery string
 
-	// Sidebar state
 	sidebarVisible bool
 	sidebarFocused bool
-	sidebarIndex   int // 0 = "All", 1+ = project index
+	sidebarIndex   int
 	sidebarWidth   int
+
+	updateChecker *update.Checker
 }
 
-func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, opencodeServer *agent.OpencodeServer, filterProjectID string) *Model {
+func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, opencodeServer *agent.OpencodeServer, filterProjectID string, updateChecker *update.Checker) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "Enter ticket title..."
 	ti.CharLimit = 100
@@ -218,6 +220,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		sidebarWidth:    24,
 		hoverColumn:     -1,
 		hoverTicket:     -1,
+		updateChecker:   updateChecker,
 	}
 	m.refreshColumnTickets()
 	return m
@@ -227,7 +230,17 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickAgentStatus(m.agentMgr.StatusPollInterval()),
 		m.spinner.Tick,
+		m.checkForUpdates(),
 	)
+}
+
+func (m *Model) checkForUpdates() tea.Cmd {
+	if m.updateChecker == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return updateCheckMsg(m.updateChecker.Check())
+	}
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -394,6 +407,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notificationMsg:
 		if time.Since(m.notifyTime) > 3*time.Second {
 			m.notification = ""
+		}
+		return m, nil
+
+	case updateCheckMsg:
+		if msg.UpdateAvailable {
+			result := update.CheckResult(msg)
+			m.notify(fmt.Sprintf("Update %s available: %s", msg.LatestVersion, result.UpdateHint()))
 		}
 		return m, nil
 	}
@@ -2447,6 +2467,7 @@ type agentStatusMsg time.Time
 type agentStatusResultMsg map[board.TicketID]board.AgentStatus
 type notificationMsg time.Time
 type shutdownCompleteMsg struct{}
+type updateCheckMsg update.CheckResult
 
 type spawnReadyMsg struct {
 	ticketID     board.TicketID

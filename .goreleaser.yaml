@@ -16,9 +16,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/techdufus/openkanban/cmd.version={{.Version}}
-      - -X github.com/techdufus/openkanban/cmd.commit={{.ShortCommit}}
-      - -X github.com/techdufus/openkanban/cmd.date={{.Date}}
+      - -X github.com/techdufus/openkanban/cmd.Version={{.Version}}
+      - -X github.com/techdufus/openkanban/cmd.Commit={{.ShortCommit}}
+      - -X github.com/techdufus/openkanban/cmd.Date={{.Date}}
 
 archives:
   - formats: [tar.gz]

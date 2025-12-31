@@ -13,9 +13,10 @@ import (
 	"github.com/techdufus/openkanban/internal/git"
 	"github.com/techdufus/openkanban/internal/project"
 	"github.com/techdufus/openkanban/internal/ui"
+	"github.com/techdufus/openkanban/internal/update"
 )
 
-func Run(cfg *config.Config, filterPath string) error {
+func Run(cfg *config.Config, filterPath, version string) error {
 	registry, err := project.LoadRegistry()
 	if err != nil {
 		return fmt.Errorf("failed to load project registry: %w", err)
@@ -47,7 +48,8 @@ func Run(cfg *config.Config, filterPath string) error {
 	}
 	defer opencodeServer.Stop()
 
-	model := ui.NewModel(cfg, globalStore, agentMgr, opencodeServer, filterProjectID)
+	updateChecker := update.NewChecker(version)
+	model := ui.NewModel(cfg, globalStore, agentMgr, opencodeServer, filterProjectID, updateChecker)
 
 	defer model.Cleanup()
 
