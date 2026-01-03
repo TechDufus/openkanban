@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/techdufus/openkanban/internal/config"
 )
@@ -130,5 +131,8 @@ func (r *ProjectRegistry) List() []*Project {
 	for _, p := range r.Projects {
 		result = append(result, p)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 	return result
 }

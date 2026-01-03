@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/techdufus/openkanban/internal/board"
@@ -278,6 +279,9 @@ func (g *GlobalTicketStore) Projects() []*Project {
 	for _, p := range g.projects {
 		result = append(result, p)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 	return result
 }
 
