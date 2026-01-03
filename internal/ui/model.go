@@ -303,7 +303,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case terminal.ExitMsg:
 			if board.TicketID(msg.PaneID) == m.spawningTicketID {
 				m.resetSpawnState(board.TicketID(msg.PaneID))
-				m.notify("Agent failed to start")
+				if msg.Err != nil {
+					m.notify("Agent failed: " + msg.Err.Error())
+				} else {
+					m.notify("Agent exited unexpectedly")
+				}
 			}
 			return m, nil
 
@@ -2202,7 +2206,7 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 					if promptTemplate != "" {
 						prompt := agent.BuildContextPrompt(promptTemplate, ticket)
 						if prompt != "" {
-							args = append(args, "-p", prompt)
+							args = append(args, "--prompt", prompt)
 						}
 					}
 				} else if sessionID != "" {
