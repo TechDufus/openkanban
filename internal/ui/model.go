@@ -2255,11 +2255,11 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 			command := agentCfg.Command
 			sessionID := agent.FindOpencodeSession(worktreePath)
 
-			if !isNewSession && sessionID != "" && opencodeServer != nil && opencodeServer.IsRunning() {
+			if sessionID != "" && opencodeServer != nil && opencodeServer.IsRunning() {
 				command = "opencode"
-				args = []string{"attach", opencodeServer.URL(), "--session", sessionID}
+				args = []string{"attach", opencodeServer.URL(), "--dir", worktreePath, "--session", sessionID}
 			} else {
-				args = []string{worktreePath, "--port", fmt.Sprintf("%d", agentPort)}
+				args = []string{worktreePath}
 				if isNewSession {
 					if promptTemplate != "" {
 						prompt := agent.BuildContextPrompt(promptTemplate, ticket)
@@ -2269,6 +2269,8 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 					}
 				} else if sessionID != "" {
 					args = append(args, "--session", sessionID)
+				} else {
+					args = append(args, "--continue")
 				}
 			}
 			return spawnReadyMsg{

@@ -77,9 +77,11 @@ func (d *StatusDetector) DetectStatusWithPort(agentType, sessionID, worktreePath
 			if status := d.queryOpencodeAPIOnPort(port); status != board.AgentNone {
 				return status
 			}
-		} else if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
+		}
+		if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
 			return status
-		} else if sessionID != "" {
+		}
+		if sessionID != "" {
 			if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
 				return status
 			}
@@ -92,7 +94,10 @@ func (d *StatusDetector) DetectStatusWithPort(agentType, sessionID, worktreePath
 		}
 	}
 
-	return board.AgentIdle
+	// Return AgentNone when status cannot be determined.
+	// The UI will show "working" for running processes with unknown status,
+	// which is better than misleadingly showing "idle" when the agent may be active.
+	return board.AgentNone
 }
 
 func (d *StatusDetector) detectFromTerminalContent(agentType, content string) board.AgentStatus {

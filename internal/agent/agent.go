@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -28,9 +29,11 @@ func FindOpencodeSession(directory string) string {
 		return ""
 	}
 
+	normalizedDir := normalizePath(directory)
+
 	var matches []opencodeSession
 	for _, s := range sessions {
-		if s.Directory == directory {
+		if normalizePath(s.Directory) == normalizedDir {
 			matches = append(matches, s)
 		}
 	}
@@ -44,6 +47,14 @@ func FindOpencodeSession(directory string) string {
 	})
 
 	return matches[0].ID
+}
+
+func normalizePath(path string) string {
+	cleaned := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved
+	}
+	return cleaned
 }
 
 // Manager handles AI agent configuration and status polling.

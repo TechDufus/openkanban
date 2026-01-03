@@ -54,7 +54,7 @@ func Run(cfg *config.Config, filterPath, version string) error {
 	defer model.Cleanup()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
 

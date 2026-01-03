@@ -189,6 +189,15 @@ func TestDetectStatusWithPort_NotRunning(t *testing.T) {
 	}
 }
 
+func TestDetectStatusWithPort_UnknownStatus(t *testing.T) {
+	d := NewStatusDetector()
+
+	result := d.DetectStatusWithPort("opencode", "nonexistent-session", "/nonexistent/path", 0, true, "some random output with no patterns")
+	if result != board.AgentNone {
+		t.Errorf("DetectStatusWithPort with undetermined status should return AgentNone; got %q", result)
+	}
+}
+
 func TestStatusDetectorCaching(t *testing.T) {
 	d := NewStatusDetector()
 
