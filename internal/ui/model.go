@@ -2198,10 +2198,12 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 				args = []string{"attach", opencodeServer.URL(), "--session", sessionID}
 			} else {
 				args = []string{worktreePath, "--port", fmt.Sprintf("%d", agentPort)}
-				if isNewSession && promptTemplate != "" {
-					prompt := agent.BuildContextPrompt(promptTemplate, ticket)
-					if prompt != "" {
-						args = append(args, "-p", prompt)
+				if isNewSession {
+					if promptTemplate != "" {
+						prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+						if prompt != "" {
+							args = append(args, "-p", prompt)
+						}
 					}
 				} else if sessionID != "" {
 					args = append(args, "--session", sessionID)
