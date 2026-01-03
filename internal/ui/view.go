@@ -810,6 +810,7 @@ func (m *Model) renderTicketForm() string {
 	labelsLabel := labelStyle
 	priorityLabel := labelStyle
 	worktreeLabel := labelStyle
+	agentLabel := labelStyle
 	projectLabel := labelStyle
 
 	switch m.ticketFormField {
@@ -825,6 +826,8 @@ func (m *Model) renderTicketForm() string {
 		priorityLabel = activeLabelStyle
 	case formFieldWorktree:
 		worktreeLabel = activeLabelStyle
+	case formFieldAgent:
+		agentLabel = activeLabelStyle
 	case formFieldProject:
 		projectLabel = activeLabelStyle
 	}
@@ -842,6 +845,7 @@ func (m *Model) renderTicketForm() string {
 
 	priorityField := m.renderPrioritySelector()
 	worktreeField := m.renderWorktreeSelector()
+	agentField := m.renderAgentSelector()
 	projectField := m.renderProjectSelector()
 
 	titleCharCount := fmt.Sprintf("%d/100", len(m.titleInput.Value()))
@@ -856,7 +860,7 @@ func (m *Model) renderTicketForm() string {
 	focusIndicator := lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
 	noFocus := "  "
 
-	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
+	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, agentFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
 	switch m.ticketFormField {
 	case formFieldTitle:
 		titleFocus = focusIndicator
@@ -870,6 +874,8 @@ func (m *Model) renderTicketForm() string {
 		priorityFocus = focusIndicator
 	case formFieldWorktree:
 		worktreeFocus = focusIndicator
+	case formFieldAgent:
+		agentFocus = focusIndicator
 	case formFieldProject:
 		projectFocus = focusIndicator
 	}
@@ -892,7 +898,10 @@ func (m *Model) renderTicketForm() string {
 		"  " + priorityField + "\n\n" +
 		worktreeFocus + worktreeLabel.Render("Worktree") + "\n" +
 		"  " + descriptionStyle.Render("Use isolated worktree or work in main repo") + "\n" +
-		"  " + worktreeField + "\n"
+		"  " + worktreeField + "\n\n" +
+		agentFocus + agentLabel.Render("Agent") + "\n" +
+		"  " + descriptionStyle.Render("AI agent to use for this ticket") + "\n" +
+		"  " + agentField + "\n"
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
@@ -964,6 +973,33 @@ func (m *Model) renderWorktreeSelector() string {
 	}
 
 	return worktreeOption + "  " + mainOption + hint
+}
+
+func (m *Model) renderAgentSelector() string {
+	agents := m.getAgentNames()
+	if len(agents) == 0 {
+		return dimStyle.Render("No agents configured")
+	}
+
+	var parts []string
+	for _, agent := range agents {
+		style := lipgloss.NewStyle().Foreground(colorBlue)
+		if m.ticketAgent == agent {
+			style = style.Bold(true).Background(colorSurface).Padding(0, 1)
+			parts = append(parts, style.Render("● "+agent))
+		} else {
+			parts = append(parts, style.Render("○ "+agent))
+		}
+	}
+
+	hint := ""
+	if m.ticketFormField == formFieldAgent && !m.agentLocked {
+		hint = "  " + dimStyle.Render("← → to select")
+	} else if m.agentLocked {
+		hint = "  " + dimStyle.Render("(locked - agent already spawned)")
+	}
+
+	return strings.Join(parts, "  ") + hint
 }
 
 func (m *Model) renderWithOverlay(overlay string) string {

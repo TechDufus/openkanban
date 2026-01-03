@@ -54,7 +54,8 @@ const (
 	formFieldLabels      = 3
 	formFieldPriority    = 4
 	formFieldWorktree    = 5
-	formFieldProject     = 6
+	formFieldAgent       = 6
+	formFieldProject     = 7
 )
 
 type Model struct {
@@ -98,10 +99,13 @@ type Model struct {
 	labelsInput        textinput.Model
 	ticketPriority     int
 	ticketUseWorktree  bool
+	ticketAgent        string
+	agentListIndex     int
 	projectInput       textinput.Model
 	ticketFormField    int
 	editingTicketID    board.TicketID
 	branchLocked       bool
+	agentLocked        bool
 	selectedProject    *project.Project
 	projectListIndex   int
 	showAddProjectForm bool
@@ -1092,6 +1096,10 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		cmd = m.handlePriorityNav(msg)
 	case formFieldWorktree:
 		cmd = m.handleWorktreeToggle(msg)
+	case formFieldAgent:
+		if !m.agentLocked {
+			cmd = m.handleAgentNav(msg)
+		}
 	case formFieldProject:
 		if m.showAddProjectForm {
 			m.addProjectPath, cmd = m.addProjectPath.Update(msg)
@@ -1129,6 +1137,28 @@ func (m *Model) handleWorktreeToggle(msg tea.KeyMsg) tea.Cmd {
 	case "n", "N":
 		m.ticketUseWorktree = false
 	}
+	return nil
+}
+
+func (m *Model) handleAgentNav(msg tea.KeyMsg) tea.Cmd {
+	agents := m.getAgentNames()
+	if len(agents) == 0 {
+		return nil
+	}
+
+	switch msg.String() {
+	case "j", "down", "l", "right":
+		m.agentListIndex++
+		if m.agentListIndex >= len(agents) {
+			m.agentListIndex = 0
+		}
+	case "k", "up", "h", "left":
+		m.agentListIndex--
+		if m.agentListIndex < 0 {
+			m.agentListIndex = len(agents) - 1
+		}
+	}
+	m.ticketAgent = agents[m.agentListIndex]
 	return nil
 }
 
@@ -1243,19 +1273,24 @@ func (m *Model) nextFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField++
 
-	maxField := formFieldWorktree
+	maxField := formFieldAgent
 	if !isEdit {
 		maxField = formFieldProject
 	}
 
-	if m.ticketFormField > maxField {
-		m.ticketFormField = formFieldTitle
-	}
-	if m.ticketFormField == formFieldBranch && m.branchLocked {
-		m.ticketFormField++
+	for {
 		if m.ticketFormField > maxField {
 			m.ticketFormField = formFieldTitle
 		}
+		if m.ticketFormField == formFieldBranch && m.branchLocked {
+			m.ticketFormField++
+			continue
+		}
+		if m.ticketFormField == formFieldAgent && m.agentLocked {
+			m.ticketFormField++
+			continue
+		}
+		break
 	}
 	m.focusCurrentField()
 	return m
@@ -1265,19 +1300,24 @@ func (m *Model) prevFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField--
 
-	maxField := formFieldWorktree
+	maxField := formFieldAgent
 	if !isEdit {
 		maxField = formFieldProject
 	}
 
-	if m.ticketFormField < formFieldTitle {
-		m.ticketFormField = maxField
-	}
-	if m.ticketFormField == formFieldBranch && m.branchLocked {
-		m.ticketFormField--
+	for {
 		if m.ticketFormField < formFieldTitle {
 			m.ticketFormField = maxField
 		}
+		if m.ticketFormField == formFieldBranch && m.branchLocked {
+			m.ticketFormField--
+			continue
+		}
+		if m.ticketFormField == formFieldAgent && m.agentLocked {
+			m.ticketFormField--
+			continue
+		}
+		break
 	}
 	m.focusCurrentField()
 	return m
@@ -1341,6 +1381,9 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 			ticket.Labels = labels
 			ticket.Priority = m.ticketPriority
 			ticket.UseWorktree = m.ticketUseWorktree
+			if !m.agentLocked {
+				ticket.AgentType = m.ticketAgent
+			}
 			ticket.Touch()
 			m.saveTicket(ticket)
 			m.refreshColumnTickets()
@@ -1353,6 +1396,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		ticket.Labels = labels
 		ticket.Priority = m.ticketPriority
 		ticket.UseWorktree = m.ticketUseWorktree
+		ticket.AgentType = m.ticketAgent
 		ticket.Status = m.columns[m.activeColumn].Status
 		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
@@ -1763,6 +1807,7 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.ticketFormField = formFieldTitle
 	m.editingTicketID = ""
 	m.branchLocked = false
+	m.agentLocked = false
 	m.showAddProjectForm = false
 
 	if m.filterProjectID != "" {
@@ -1783,6 +1828,9 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
+	m.ticketAgent = m.getDefaultAgent()
+	m.agentListIndex = m.getAgentIndex(m.ticketAgent)
 
 	m.titleInput.Reset()
 	m.descInput.Reset()
@@ -1806,6 +1854,7 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 	m.ticketFormField = formFieldTitle
 	m.editingTicketID = ticket.ID
 	m.branchLocked = ticket.WorktreePath != ""
+	m.agentLocked = ticket.AgentSpawnedAt != nil
 	m.selectedProject = m.globalStore.GetProjectForTicket(ticket)
 	m.titleInput.SetValue(ticket.Title)
 	m.descInput.SetValue(ticket.Description)
@@ -1820,6 +1869,12 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 		m.ticketPriority = 3
 	}
 	m.ticketUseWorktree = ticket.UseWorktree
+	if ticket.AgentType != "" {
+		m.ticketAgent = ticket.AgentType
+	} else {
+		m.ticketAgent = m.getDefaultAgent()
+	}
+	m.agentListIndex = m.getAgentIndex(m.ticketAgent)
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -2087,7 +2142,10 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	agentType := proj.Settings.DefaultAgent
+	agentType := ticket.AgentType
+	if agentType == "" {
+		agentType = proj.Settings.DefaultAgent
+	}
 	if agentType == "" {
 		agentType = m.config.Defaults.DefaultAgent
 	}
@@ -2389,6 +2447,23 @@ func (m *Model) getAgentNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (m *Model) getDefaultAgent() string {
+	if m.selectedProject != nil && m.selectedProject.Settings.DefaultAgent != "" {
+		return m.selectedProject.Settings.DefaultAgent
+	}
+	return m.config.Defaults.DefaultAgent
+}
+
+func (m *Model) getAgentIndex(agentName string) int {
+	agents := m.getAgentNames()
+	for i, name := range agents {
+		if name == agentName {
+			return i
+		}
+	}
+	return 0
 }
 
 const gracefulShutdownTimeout = 3 * time.Second
