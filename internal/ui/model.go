@@ -606,9 +606,14 @@ func (m *Model) openAddProjectForm() (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
+func (m *Model) sidebarAllY() int          { return 2 }
+func (m *Model) sidebarProjectStartY() int { return 4 }
+func (m *Model) sidebarAddProjectY(projectCount int) int {
+	return m.sidebarProjectStartY() + projectCount + 1
+}
+
 func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	headerHeight := 5
-	y := msg.Y - headerHeight
+	y := msg.Y - m.headerHeight()
 
 	if y < 0 {
 		return m, nil
@@ -616,31 +621,21 @@ func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	projects := m.globalStore.Projects()
 
-	// Line 0: "Projects" title
-	// Line 1: blank
-	// Line 2: "All (X)"
-	// Line 3: blank
-	// Line 4+i: project[i]
-	// Line 4+len: blank
-	// Line 5+len: "+ Add project"
-
-	if y == 2 {
+	if y == m.sidebarAllY() {
 		m.sidebarIndex = 0
 		m.toggleAllProjects()
 		return m, nil
 	}
 
-	projectStartY := 4
 	for i := range projects {
-		if y == projectStartY+i {
+		if y == m.sidebarProjectStartY()+i {
 			m.sidebarIndex = i + 1
 			m.toggleProjectFilter(projects[i].ID)
 			return m, nil
 		}
 	}
 
-	addProjectY := 5 + len(projects)
-	if y == addProjectY {
+	if y == m.sidebarAddProjectY(len(projects)) {
 		return m.openAddProjectForm()
 	}
 
@@ -1952,6 +1947,15 @@ func (m *Model) ensureColumnVisible() {
 	if m.scrollOffset > maxOffset {
 		m.scrollOffset = maxOffset
 	}
+}
+
+func (m *Model) headerHeight() int {
+	const (
+		content      = 1
+		borderBottom = 1
+		spacing      = 2
+	)
+	return content + borderBottom + spacing
 }
 
 func (m *Model) calcColumnWidth() int {

@@ -1638,9 +1638,8 @@ func (m *Model) renderSidebar() string {
 	}
 
 	projects := m.globalStore.Projects()
-	headerHeight := 5
 	statusHeight := 1
-	availableHeight := m.height - headerHeight - statusHeight
+	availableHeight := m.height - m.headerHeight() - statusHeight
 
 	titleStyle := lipgloss.NewStyle().
 		Foreground(colorBlue).
