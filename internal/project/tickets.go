@@ -304,3 +304,48 @@ func (g *GlobalTicketStore) RemoveProject(id string) error {
 
 	return g.registry.Delete(id)
 }
+
+func (g *GlobalTicketStore) GetBlockedBy(ticketID board.TicketID) []*board.Ticket {
+	ticket, ok := g.allTickets[ticketID]
+	if !ok || len(ticket.BlockedBy) == 0 {
+		return nil
+	}
+
+	var blockers []*board.Ticket
+	for _, blockerID := range ticket.BlockedBy {
+		if blocker, exists := g.allTickets[blockerID]; exists {
+			blockers = append(blockers, blocker)
+		}
+	}
+	return blockers
+}
+
+func (g *GlobalTicketStore) GetBlocks(ticketID board.TicketID) []*board.Ticket {
+	var blocks []*board.Ticket
+	for _, ticket := range g.allTickets {
+		for _, blockerID := range ticket.BlockedBy {
+			if blockerID == ticketID {
+				blocks = append(blocks, ticket)
+				break
+			}
+		}
+	}
+	return blocks
+}
+
+func (g *GlobalTicketStore) RemoveBlockerReferences(ticketID board.TicketID) {
+	for _, ticket := range g.allTickets {
+		if len(ticket.BlockedBy) == 0 {
+			continue
+		}
+		var filtered []board.TicketID
+		for _, blockerID := range ticket.BlockedBy {
+			if blockerID != ticketID {
+				filtered = append(filtered, blockerID)
+			}
+		}
+		if len(filtered) != len(ticket.BlockedBy) {
+			ticket.BlockedBy = filtered
+		}
+	}
+}

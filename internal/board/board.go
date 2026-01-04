@@ -92,6 +92,9 @@ type Ticket struct {
 	Labels   []string          `json:"labels,omitempty"`
 	Priority int               `json:"priority,omitempty"`
 	Meta     map[string]string `json:"meta,omitempty"`
+
+	// Dependencies - tickets that block this one (informational only, no enforcement)
+	BlockedBy []TicketID `json:"blocked_by,omitempty"`
 }
 
 func NewTicket(title, projectID string) *Ticket {

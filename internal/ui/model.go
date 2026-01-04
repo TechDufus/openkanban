@@ -55,7 +55,8 @@ const (
 	formFieldPriority    = 4
 	formFieldWorktree    = 5
 	formFieldAgent       = 6
-	formFieldProject     = 7
+	formFieldBlockedBy   = 7
+	formFieldProject     = 8
 )
 
 type Model struct {
@@ -110,6 +111,11 @@ type Model struct {
 	projectListIndex   int
 	showAddProjectForm bool
 	addProjectPath     textinput.Model
+
+	blockerCandidates  []*board.Ticket
+	selectedBlockers   map[board.TicketID]bool
+	blockerListIndex   int
+	blockerFilterInput textinput.Model
 
 	notification string
 	notifyTime   time.Time
@@ -178,6 +184,11 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	ap.CharLimit = 256
 	ap.Width = 40
 
+	bf := textinput.New()
+	bf.Placeholder = "Filter tickets..."
+	bf.CharLimit = 100
+	bf.Width = 30
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
@@ -198,32 +209,34 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	}
 
 	m := &Model{
-		config:          cfg,
-		globalStore:     globalStore,
-		columns:         board.DefaultColumns(),
-		filterProjectID: filterProjectID,
-		worktreeMgrs:    worktreeMgrs,
-		agentMgr:        agentMgr,
-		opencodeServer:  opencodeServer,
-		mode:            ModeNormal,
-		titleInput:      ti,
-		descInput:       di,
-		branchInput:     bi,
-		labelsInput:     li,
-		ticketPriority:  3,
-		projectInput:    pi,
-		settingsInput:   si,
-		filterInput:     fi,
-		addProjectPath:  ap,
-		spinner:         sp,
-		panes:           make(map[board.TicketID]*terminal.Pane),
-		statusDetector:  agent.NewStatusDetector(),
-		selectedProject: selectedProject,
-		sidebarVisible:  cfg.UI.SidebarVisible,
-		sidebarWidth:    24,
-		hoverColumn:     -1,
-		hoverTicket:     -1,
-		updateChecker:   updateChecker,
+		config:             cfg,
+		globalStore:        globalStore,
+		columns:            board.DefaultColumns(),
+		filterProjectID:    filterProjectID,
+		worktreeMgrs:       worktreeMgrs,
+		agentMgr:           agentMgr,
+		opencodeServer:     opencodeServer,
+		mode:               ModeNormal,
+		titleInput:         ti,
+		descInput:          di,
+		branchInput:        bi,
+		labelsInput:        li,
+		ticketPriority:     3,
+		projectInput:       pi,
+		settingsInput:      si,
+		filterInput:        fi,
+		addProjectPath:     ap,
+		blockerFilterInput: bf,
+		selectedBlockers:   make(map[board.TicketID]bool),
+		spinner:            sp,
+		panes:              make(map[board.TicketID]*terminal.Pane),
+		statusDetector:     agent.NewStatusDetector(),
+		selectedProject:    selectedProject,
+		sidebarVisible:     cfg.UI.SidebarVisible,
+		sidebarWidth:       24,
+		hoverColumn:        -1,
+		hoverTicket:        -1,
+		updateChecker:      updateChecker,
 	}
 	m.refreshColumnTickets()
 	return m
@@ -1109,6 +1122,8 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		if !m.agentLocked {
 			cmd = m.handleAgentNav(msg)
 		}
+	case formFieldBlockedBy:
+		cmd = m.handleBlockerNav(msg)
 	case formFieldProject:
 		if m.showAddProjectForm {
 			m.addProjectPath, cmd = m.addProjectPath.Update(msg)
@@ -1192,6 +1207,93 @@ func (m *Model) handleProjectListNav(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *Model) handleBlockerNav(msg tea.KeyMsg) tea.Cmd {
+	visibleCandidates := m.getFilteredBlockerCandidates()
+
+	switch msg.Type {
+	case tea.KeyDown, tea.KeyCtrlN:
+		if len(visibleCandidates) > 0 {
+			m.blockerListIndex++
+			if m.blockerListIndex >= len(visibleCandidates) {
+				m.blockerListIndex = 0
+			}
+		}
+		return nil
+	case tea.KeyUp, tea.KeyCtrlP:
+		if len(visibleCandidates) > 0 {
+			m.blockerListIndex--
+			if m.blockerListIndex < 0 {
+				m.blockerListIndex = len(visibleCandidates) - 1
+			}
+		}
+		return nil
+	case tea.KeySpace, tea.KeyEnter:
+		if m.blockerListIndex < len(visibleCandidates) {
+			ticket := visibleCandidates[m.blockerListIndex]
+			if m.selectedBlockers[ticket.ID] {
+				delete(m.selectedBlockers, ticket.ID)
+			} else {
+				m.selectedBlockers[ticket.ID] = true
+			}
+		}
+		return nil
+	}
+
+	var cmd tea.Cmd
+	m.blockerFilterInput, cmd = m.blockerFilterInput.Update(msg)
+
+	newVisible := m.getFilteredBlockerCandidates()
+	if m.blockerListIndex >= len(newVisible) && len(newVisible) > 0 {
+		m.blockerListIndex = len(newVisible) - 1
+	} else if len(newVisible) == 0 {
+		m.blockerListIndex = 0
+	}
+
+	return cmd
+}
+
+func (m *Model) getFilteredBlockerCandidates() []*board.Ticket {
+	filterVal := m.blockerFilterInput.Value()
+	if filterVal == "" {
+		return m.blockerCandidates
+	}
+
+	var visible []*board.Ticket
+	for _, t := range m.blockerCandidates {
+		if strings.Contains(strings.ToLower(t.Title), strings.ToLower(filterVal)) {
+			visible = append(visible, t)
+		}
+	}
+	return visible
+}
+
+func (m *Model) initBlockerCandidates(excludeTicketID board.TicketID) {
+	m.blockerCandidates = nil
+	for _, ticket := range m.globalStore.All() {
+		if ticket.ID == excludeTicketID {
+			continue
+		}
+		if ticket.Status == board.StatusArchived {
+			continue
+		}
+		m.blockerCandidates = append(m.blockerCandidates, ticket)
+	}
+	sort.Slice(m.blockerCandidates, func(i, j int) bool {
+		return m.blockerCandidates[i].Title < m.blockerCandidates[j].Title
+	})
+}
+
+func (m *Model) collectSelectedBlockers() []board.TicketID {
+	var blockers []board.TicketID
+	for id := range m.selectedBlockers {
+		blockers = append(blockers, id)
+	}
+	sort.Slice(blockers, func(i, j int) bool {
+		return string(blockers[i]) < string(blockers[j])
+	})
+	return blockers
 }
 
 func (m *Model) confirmDeleteProject(p *project.Project) {
@@ -1282,7 +1384,7 @@ func (m *Model) nextFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField++
 
-	maxField := formFieldAgent
+	maxField := formFieldBlockedBy
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1309,7 +1411,7 @@ func (m *Model) prevFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField--
 
-	maxField := formFieldAgent
+	maxField := formFieldBlockedBy
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1337,6 +1439,7 @@ func (m *Model) blurAllFormFields() {
 	m.descInput.Blur()
 	m.branchInput.Blur()
 	m.labelsInput.Blur()
+	m.blockerFilterInput.Blur()
 	m.projectInput.Blur()
 }
 
@@ -1354,6 +1457,8 @@ func (m *Model) focusCurrentField() {
 		break
 	case formFieldWorktree:
 		break
+	case formFieldBlockedBy:
+		m.blockerFilterInput.Focus()
 	case formFieldProject:
 		m.projectInput.Focus()
 	}
@@ -1379,6 +1484,8 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 
 	labels := m.parseLabels(m.labelsInput.Value())
 
+	blockedBy := m.collectSelectedBlockers()
+
 	if isEdit && m.editingTicketID != "" {
 		ticket, _ := m.globalStore.Get(m.editingTicketID)
 		if ticket != nil {
@@ -1393,6 +1500,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 			if !m.agentLocked {
 				ticket.AgentType = m.ticketAgent
 			}
+			ticket.BlockedBy = blockedBy
 			ticket.Touch()
 			m.saveTicket(ticket)
 			m.refreshColumnTickets()
@@ -1406,6 +1514,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		ticket.Priority = m.ticketPriority
 		ticket.UseWorktree = m.ticketUseWorktree
 		ticket.AgentType = m.ticketAgent
+		ticket.BlockedBy = blockedBy
 		ticket.Status = m.columns[m.activeColumn].Status
 		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
@@ -1847,6 +1956,12 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.labelsInput.Reset()
 	m.ticketPriority = 3
 	m.ticketUseWorktree = true
+
+	m.initBlockerCandidates("")
+	m.selectedBlockers = make(map[board.TicketID]bool)
+	m.blockerListIndex = 0
+	m.blockerFilterInput.Reset()
+
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -1884,6 +1999,15 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 		m.ticketAgent = m.getDefaultAgent()
 	}
 	m.agentListIndex = m.getAgentIndex(m.ticketAgent)
+
+	m.initBlockerCandidates(ticket.ID)
+	m.selectedBlockers = make(map[board.TicketID]bool)
+	for _, blockerID := range ticket.BlockedBy {
+		m.selectedBlockers[blockerID] = true
+	}
+	m.blockerListIndex = 0
+	m.blockerFilterInput.Reset()
+
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -1973,6 +2097,7 @@ func (m *Model) performTicketCleanup(ticket *board.Ticket) {
 		}
 	}
 
+	m.globalStore.RemoveBlockerReferences(ticket.ID)
 	m.globalStore.Delete(ticket.ID)
 	m.refreshColumnTickets()
 	m.globalStore.SaveAll()

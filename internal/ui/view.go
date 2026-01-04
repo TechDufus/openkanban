@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -387,12 +388,29 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 		priorityBadge = lipgloss.NewStyle().Foreground(pColor).Bold(true).Render(priorityLabels[ticket.Priority])
 	}
 
+	var depBadge string
+	blockedByCount := len(m.globalStore.GetBlockedBy(ticket.ID))
+	blocksCount := len(m.globalStore.GetBlocks(ticket.ID))
+	if blockedByCount > 0 || blocksCount > 0 {
+		depStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		if blockedByCount > 0 && blocksCount > 0 {
+			depBadge = depStyle.Render(fmt.Sprintf("⛓%d↑%d↓", blockedByCount, blocksCount))
+		} else if blockedByCount > 0 {
+			depBadge = depStyle.Render(fmt.Sprintf("⛓%d↑", blockedByCount))
+		} else {
+			depBadge = depStyle.Render(fmt.Sprintf("⛓%d↓", blocksCount))
+		}
+	}
+
 	var headerParts []string
 	if priorityBadge != "" {
 		headerParts = append(headerParts, priorityBadge)
 	}
 	if projectBadge != "" {
 		headerParts = append(headerParts, projectBadge)
+	}
+	if depBadge != "" {
+		headerParts = append(headerParts, depBadge)
 	}
 	if sessionBadge != "" {
 		headerParts = append(headerParts, sessionBadge)
@@ -805,6 +823,7 @@ func (m *Model) renderTicketForm() string {
 	priorityLabel := labelStyle
 	worktreeLabel := labelStyle
 	agentLabel := labelStyle
+	blockerLabel := labelStyle
 	projectLabel := labelStyle
 
 	switch m.ticketFormField {
@@ -822,6 +841,8 @@ func (m *Model) renderTicketForm() string {
 		worktreeLabel = activeLabelStyle
 	case formFieldAgent:
 		agentLabel = activeLabelStyle
+	case formFieldBlockedBy:
+		blockerLabel = activeLabelStyle
 	case formFieldProject:
 		projectLabel = activeLabelStyle
 	}
@@ -840,6 +861,7 @@ func (m *Model) renderTicketForm() string {
 	priorityField := m.renderPrioritySelector()
 	worktreeField := m.renderWorktreeSelector()
 	agentField := m.renderAgentSelector()
+	blockerField := m.renderBlockerSelector()
 	projectField := m.renderProjectSelector()
 
 	titleCharCount := fmt.Sprintf("%d/100", len(m.titleInput.Value()))
@@ -854,7 +876,7 @@ func (m *Model) renderTicketForm() string {
 	focusIndicator := lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
 	noFocus := "  "
 
-	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, agentFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
+	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, agentFocus, blockerFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
 	switch m.ticketFormField {
 	case formFieldTitle:
 		titleFocus = focusIndicator
@@ -870,6 +892,8 @@ func (m *Model) renderTicketForm() string {
 		worktreeFocus = focusIndicator
 	case formFieldAgent:
 		agentFocus = focusIndicator
+	case formFieldBlockedBy:
+		blockerFocus = focusIndicator
 	case formFieldProject:
 		projectFocus = focusIndicator
 	}
@@ -895,7 +919,10 @@ func (m *Model) renderTicketForm() string {
 		"  " + worktreeField + "\n\n" +
 		agentFocus + agentLabel.Render("Agent") + "\n" +
 		"  " + descriptionStyle.Render("AI agent to use for this ticket") + "\n" +
-		"  " + agentField + "\n"
+		"  " + agentField + "\n\n" +
+		blockerFocus + blockerLabel.Render("Blocked By") + "\n" +
+		"  " + descriptionStyle.Render("Tickets that must complete before this one") + "\n" +
+		"  " + blockerField + "\n"
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
@@ -994,6 +1021,95 @@ func (m *Model) renderAgentSelector() string {
 	}
 
 	return strings.Join(parts, "  ") + hint
+}
+
+func (m *Model) renderBlockerSelector() string {
+	if len(m.blockerCandidates) == 0 {
+		return dimStyle.Render("No other tickets available")
+	}
+
+	if m.ticketFormField != formFieldBlockedBy {
+		count := len(m.selectedBlockers)
+		if count == 0 {
+			return dimStyle.Render("None selected")
+		}
+		var names []string
+		for id := range m.selectedBlockers {
+			if t, _ := m.globalStore.Get(id); t != nil {
+				name := t.Title
+				if len(name) > 20 {
+					name = name[:18] + ".."
+				}
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		return lipgloss.NewStyle().Foreground(colorTeal).Render(strings.Join(names, ", "))
+	}
+
+	var lines []string
+	lines = append(lines, m.blockerFilterInput.View())
+	lines = append(lines, "")
+
+	visibleCandidates := m.getFilteredBlockerCandidates()
+	maxVisible := 5
+
+	for i, ticket := range visibleCandidates {
+		if i >= maxVisible {
+			remaining := len(visibleCandidates) - maxVisible
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  ... and %d more", remaining)))
+			break
+		}
+
+		name := ticket.Title
+		if len(name) > 30 {
+			name = name[:28] + ".."
+		}
+
+		proj := m.globalStore.GetProjectForTicket(ticket)
+		projName := ""
+		if proj != nil {
+			projName = proj.Name
+			if len(projName) > 10 {
+				projName = projName[:8] + ".."
+			}
+		}
+
+		isSelected := m.selectedBlockers[ticket.ID]
+		isHovered := i == m.blockerListIndex
+
+		checkbox := "[ ] "
+		checkboxStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		if isSelected {
+			checkbox = "[✓] "
+			checkboxStyle = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+		}
+
+		cursor := "  "
+		nameStyle := lipgloss.NewStyle().Foreground(colorText)
+		projStyle := lipgloss.NewStyle().Foreground(colorMuted)
+
+		if isHovered {
+			cursor = lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
+			nameStyle = nameStyle.Bold(true).Foreground(colorTeal)
+			projStyle = projStyle.Foreground(colorSubtext)
+		}
+
+		line := cursor + checkboxStyle.Render(checkbox) + nameStyle.Render(name)
+		if projName != "" {
+			line += "  " + projStyle.Render("❨"+projName+"❩")
+		}
+		lines = append(lines, line)
+	}
+
+	if len(visibleCandidates) == 0 {
+		lines = append(lines, dimStyle.Render("No matching tickets"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, dimStyle.Render("↑↓ navigate  Space/Enter toggle  Tab next"))
+
+	return strings.Join(lines, "\n  ")
 }
 
 func (m *Model) renderWithOverlay(overlay string) string {
@@ -1134,6 +1250,31 @@ func (m *Model) renderAgentView() string {
 		header = header + "  " + durationBadge
 	}
 
+	var depsLine string
+	if ticket != nil {
+		blockedBy := m.globalStore.GetBlockedBy(ticket.ID)
+		blocks := m.globalStore.GetBlocks(ticket.ID)
+		if len(blockedBy) > 0 || len(blocks) > 0 {
+			depStyle := lipgloss.NewStyle().Foreground(colorMuted)
+			var depParts []string
+			if len(blockedBy) > 0 {
+				var names []string
+				for _, t := range blockedBy {
+					names = append(names, t.Title)
+				}
+				depParts = append(depParts, "⛓↑ "+strings.Join(names, ", "))
+			}
+			if len(blocks) > 0 {
+				var names []string
+				for _, t := range blocks {
+					names = append(names, t.Title)
+				}
+				depParts = append(depParts, "⛓↓ "+strings.Join(names, ", "))
+			}
+			depsLine = depStyle.Render(strings.Join(depParts, "  "))
+		}
+	}
+
 	activePaneCount := 0
 	paneIndex := 0
 	for id, p := range m.panes {
@@ -1160,6 +1301,11 @@ func (m *Model) renderAgentView() string {
 	b.WriteString(strings.Repeat(" ", spacing))
 	b.WriteString(hints)
 	b.WriteString("\n")
+
+	if depsLine != "" {
+		b.WriteString(depsLine)
+		b.WriteString("\n")
+	}
 
 	b.WriteString(pane.View())
 
