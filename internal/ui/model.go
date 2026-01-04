@@ -1074,17 +1074,6 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		m.showAddProjectForm = false
 		return m, nil
 
-	case "ctrl+u", "pgup":
-		m.formScrollOffset -= m.formViewportHeight() / 2
-		if m.formScrollOffset < 0 {
-			m.formScrollOffset = 0
-		}
-		return m, nil
-
-	case "ctrl+d", "pgdown":
-		m.formScrollOffset += m.formViewportHeight() / 2
-		return m, nil
-
 	case "tab":
 		if m.showAddProjectForm && m.addProjectPath.Value() != "" {
 			m.createProjectFromPath()
