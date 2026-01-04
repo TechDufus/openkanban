@@ -49,7 +49,7 @@ func Run(cfg *config.Config, filterPath, version string) error {
 	defer opencodeServer.Stop()
 
 	updateChecker := update.NewChecker(version)
-	model := ui.NewModel(cfg, globalStore, agentMgr, opencodeServer, filterProjectID, updateChecker)
+	model := ui.NewModel(cfg, globalStore, registry, agentMgr, opencodeServer, filterProjectID, updateChecker)
 
 	defer model.Cleanup()
 

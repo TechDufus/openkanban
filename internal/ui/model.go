@@ -27,18 +27,19 @@ const agentPortBase = 4097
 type Mode string
 
 const (
-	ModeNormal       Mode = "NORMAL"
-	ModeInsert       Mode = "INSERT"
-	ModeCommand      Mode = "COMMAND"
-	ModeHelp         Mode = "HELP"
-	ModeConfirm      Mode = "CONFIRM"
-	ModeCreateTicket Mode = "CREATE"
-	ModeEditTicket   Mode = "EDIT"
-	ModeAgentView    Mode = "AGENT"
-	ModeSettings     Mode = "SETTINGS"
-	ModeShuttingDown Mode = "SHUTTING_DOWN"
-	ModeSpawning     Mode = "SPAWNING"
-	ModeFilter       Mode = "FILTER"
+	ModeNormal        Mode = "NORMAL"
+	ModeInsert        Mode = "INSERT"
+	ModeCommand       Mode = "COMMAND"
+	ModeHelp          Mode = "HELP"
+	ModeConfirm       Mode = "CONFIRM"
+	ModeCreateTicket  Mode = "CREATE"
+	ModeEditTicket    Mode = "EDIT"
+	ModeAgentView     Mode = "AGENT"
+	ModeSettings      Mode = "SETTINGS"
+	ModeShuttingDown  Mode = "SHUTTING_DOWN"
+	ModeSpawning      Mode = "SPAWNING"
+	ModeFilter        Mode = "FILTER"
+	ModeCreateProject Mode = "NEW_PROJECT"
 )
 
 const (
@@ -62,9 +63,10 @@ const (
 type Model struct {
 	config *config.Config
 
-	globalStore     *project.GlobalTicketStore
-	columns         []board.Column
-	filterProjectID string
+	globalStore      *project.GlobalTicketStore
+	projectRegistry  *project.ProjectRegistry
+	columns          []board.Column
+	filterProjectIDs map[string]bool
 
 	worktreeMgrs   map[string]*git.WorktreeManager
 	agentMgr       *agent.Manager
@@ -149,7 +151,7 @@ type Model struct {
 	updateChecker *update.Checker
 }
 
-func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, opencodeServer *agent.OpencodeServer, filterProjectID string, updateChecker *update.Checker) *Model {
+func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, projectRegistry *project.ProjectRegistry, agentMgr *agent.Manager, opencodeServer *agent.OpencodeServer, filterProjectID string, updateChecker *update.Checker) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "Enter ticket title..."
 	ti.CharLimit = 100
@@ -218,8 +220,9 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	m := &Model{
 		config:             cfg,
 		globalStore:        globalStore,
+		projectRegistry:    projectRegistry,
 		columns:            board.DefaultColumns(),
-		filterProjectID:    filterProjectID,
+		filterProjectIDs:   make(map[string]bool),
 		worktreeMgrs:       worktreeMgrs,
 		agentMgr:           agentMgr,
 		opencodeServer:     opencodeServer,
@@ -245,6 +248,9 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		hoverColumn:        -1,
 		hoverTicket:        -1,
 		updateChecker:      updateChecker,
+	}
+	if filterProjectID != "" {
+		m.filterProjectIDs[filterProjectID] = true
 	}
 	m.refreshColumnTickets()
 	return m
@@ -469,7 +475,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeAgentView {
 			break
 		}
-		if m.mode == ModeNormal && (m.filterQuery != "" || m.filterProjectID != "") {
+		if m.mode == ModeNormal && (m.filterQuery != "" || len(m.filterProjectIDs) > 0) {
 			m.clearFilter()
 			m.notify("Filter cleared")
 			return m, nil
@@ -510,6 +516,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSettingsMode(msg)
 	case ModeFilter:
 		return m.handleFilterMode(msg)
+	case ModeCreateProject:
+		return m.handleCreateProjectMode(msg)
 	}
 
 	return m, nil
@@ -591,12 +599,11 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) openAddProjectForm() (tea.Model, tea.Cmd) {
-	m.showAddProjectForm = true
 	m.addProjectPath.SetValue("")
 	m.addProjectPath.Focus()
-	m.mode = ModeCreateTicket
-	m.ticketFormField = formFieldProject
-	return m, nil
+	m.mode = ModeCreateProject
+	m.notification = ""
+	return m, textinput.Blink
 }
 
 func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -619,10 +626,7 @@ func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	if y == 2 {
 		m.sidebarIndex = 0
-		m.filterProjectID = ""
-		m.filterQuery = ""
-		m.refreshColumnTickets()
-		m.notify("Showing all projects")
+		m.toggleAllProjects()
 		return m, nil
 	}
 
@@ -630,10 +634,7 @@ func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	for i := range projects {
 		if y == projectStartY+i {
 			m.sidebarIndex = i + 1
-			m.filterProjectID = projects[i].ID
-			m.filterQuery = ""
-			m.refreshColumnTickets()
-			m.notify("Filtering: " + projects[i].Name)
+			m.toggleProjectFilter(projects[i].ID)
 			return m, nil
 		}
 	}
@@ -660,30 +661,27 @@ func (m *Model) handleSidebarNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.sidebarIndex > 0 {
 			m.sidebarIndex--
 		}
-	case "enter":
+	case "enter", " ":
 		if m.sidebarIndex == 0 {
-			m.filterProjectID = ""
-			m.filterQuery = ""
-			m.notify("Showing all projects")
-			m.refreshColumnTickets()
-			m.sidebarFocused = false
+			m.toggleAllProjects()
 		} else if m.sidebarIndex == addIndex {
 			return m.openAddProjectForm()
 		} else {
 			idx := m.sidebarIndex - 1
 			if idx < len(projects) {
-				m.filterProjectID = projects[idx].ID
-				m.filterQuery = ""
-				m.notify("Filtering: " + projects[idx].Name)
+				m.toggleProjectFilter(projects[idx].ID)
 			}
-			m.refreshColumnTickets()
-			m.sidebarFocused = false
 		}
 	case "l", "right":
 		m.sidebarFocused = false
 		return m, nil
 	case "a":
 		return m.openAddProjectForm()
+	case "d":
+		if m.sidebarIndex > 0 && m.sidebarIndex <= len(projects) {
+			m.confirmDeleteProject(projects[m.sidebarIndex-1])
+		}
+		return m, nil
 	case "esc":
 		m.sidebarFocused = false
 	}
@@ -778,7 +776,7 @@ func (m *Model) hitTestHeader(x, y int) bool {
 		return false
 	}
 
-	if m.filterQuery != "" || m.filterProjectID != "" {
+	if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
 		clearStart := 20 + len(m.filterQuery) + 15
 		if x >= clearStart && x <= clearStart+10 {
 			m.clearFilter()
@@ -1336,9 +1334,26 @@ func (m *Model) collectSelectedBlockers() []board.TicketID {
 }
 
 func (m *Model) confirmDeleteProject(p *project.Project) {
-	m.confirmMsg = fmt.Sprintf("Delete project '%s'?", p.Name)
+	ticketCount := 0
+	for _, t := range m.globalStore.All() {
+		if t.ProjectID == p.ID {
+			ticketCount++
+		}
+	}
+
+	if ticketCount > 0 {
+		m.confirmMsg = fmt.Sprintf("Delete '%s' and its %d ticket(s)?", p.Name, ticketCount)
+	} else {
+		m.confirmMsg = fmt.Sprintf("Delete project '%s'?", p.Name)
+	}
+
 	m.showConfirm = true
 	m.confirmFn = func() tea.Cmd {
+		if err := m.projectRegistry.Delete(p.ID); err != nil {
+			m.notify("Failed to delete: " + err.Error())
+			return nil
+		}
+
 		m.globalStore.RemoveProject(p.ID)
 		delete(m.worktreeMgrs, p.ID)
 
@@ -1352,9 +1367,7 @@ func (m *Model) confirmDeleteProject(p *project.Project) {
 			m.selectedProject = nil
 		}
 
-		if m.filterProjectID == p.ID {
-			m.filterProjectID = ""
-		}
+		delete(m.filterProjectIDs, p.ID)
 
 		m.notify("Deleted: " + p.Name)
 		return nil
@@ -1386,6 +1399,13 @@ func (m *Model) createProjectFromPath() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		m.notify("Invalid path: " + err.Error())
@@ -1401,17 +1421,29 @@ func (m *Model) createProjectFromPath() (tea.Model, tea.Cmd) {
 	name := filepath.Base(absPath)
 
 	newProject := project.NewProject(name, absPath)
+	if m.config.Defaults.DefaultAgent != "" {
+		newProject.Settings.DefaultAgent = m.config.Defaults.DefaultAgent
+	}
 	if m.config.Defaults.BranchPrefix != "" {
 		newProject.Settings.BranchPrefix = m.config.Defaults.BranchPrefix
 	}
 
-	m.globalStore.AddProject(newProject)
+	if err := m.projectRegistry.Add(newProject); err != nil {
+		m.notify("Failed to save: " + err.Error())
+		return m, nil
+	}
 
+	m.globalStore.AddProject(newProject)
 	m.worktreeMgrs[newProject.ID] = git.NewWorktreeManager(newProject)
 	m.selectedProject = newProject
 	m.showAddProjectForm = false
 	m.addProjectPath.Blur()
 	m.projectListIndex = len(m.globalStore.Projects()) - 1
+
+	if m.mode == ModeCreateProject {
+		m.mode = ModeNormal
+	}
+
 	m.notify("Added project: " + name)
 	return m, nil
 }
@@ -1764,12 +1796,11 @@ func (m *Model) getSettingsValue(key string) string {
 		}
 		return "Off"
 	case "filter_project":
-		if m.filterProjectID == "" {
+		count := len(m.filterProjectIDs)
+		if count == 0 {
 			return "All Projects"
 		}
-		if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
-			return p.Name
-		}
+		return fmt.Sprintf("%d selected", count)
 	case "sidebar_visible":
 		if m.sidebarVisible {
 			return "On"
@@ -1837,9 +1868,62 @@ func (m *Model) handleFilterMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *Model) handleCreateProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		return m.createProjectFromPath()
+	case "esc":
+		m.mode = ModeNormal
+		m.addProjectPath.Blur()
+		return m, nil
+	case "ctrl+c":
+		m.mode = ModeNormal
+		m.addProjectPath.Blur()
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.addProjectPath, cmd = m.addProjectPath.Update(msg)
+	return m, cmd
+}
+
 func (m *Model) clearFilter() {
 	m.filterQuery = ""
-	m.filterProjectID = ""
+	m.filterProjectIDs = make(map[string]bool)
+	m.refreshColumnTickets()
+}
+
+func (m *Model) toggleProjectFilter(projectID string) {
+	if m.filterProjectIDs[projectID] {
+		delete(m.filterProjectIDs, projectID)
+	} else {
+		m.filterProjectIDs[projectID] = true
+	}
+	m.filterQuery = ""
+	m.refreshColumnTickets()
+}
+
+func (m *Model) toggleAllProjects() {
+	projects := m.globalStore.Projects()
+	allSelected := len(m.filterProjectIDs) == len(projects) && len(projects) > 0
+	for _, p := range projects {
+		if !m.filterProjectIDs[p.ID] {
+			allSelected = false
+			break
+		}
+	}
+
+	if allSelected || len(m.filterProjectIDs) == 0 {
+		m.filterProjectIDs = make(map[string]bool)
+		for _, p := range projects {
+			m.filterProjectIDs[p.ID] = true
+		}
+		m.notify("All projects selected")
+	} else {
+		m.filterProjectIDs = make(map[string]bool)
+		m.notify("All projects deselected")
+	}
+	m.filterQuery = ""
 	m.refreshColumnTickets()
 }
 
@@ -1966,8 +2050,11 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.agentLocked = false
 	m.showAddProjectForm = false
 
-	if m.filterProjectID != "" {
-		m.selectedProject = m.globalStore.GetProject(m.filterProjectID)
+	if len(m.filterProjectIDs) == 1 {
+		for id := range m.filterProjectIDs {
+			m.selectedProject = m.globalStore.GetProject(id)
+			break
+		}
 	} else if m.selectedProject == nil {
 		projects := m.globalStore.Projects()
 		if len(projects) > 0 {
@@ -2588,7 +2675,7 @@ func (m *Model) refreshColumnTickets() {
 }
 
 func (m *Model) ticketMatchesFilter(t *board.Ticket) bool {
-	if m.filterProjectID != "" && t.ProjectID != m.filterProjectID {
+	if len(m.filterProjectIDs) > 0 && !m.filterProjectIDs[t.ProjectID] {
 		return false
 	}
 	if m.filterQuery == "" {

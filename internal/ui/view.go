@@ -60,6 +60,9 @@ func (m *Model) View() string {
 	if m.mode == ModeSettings {
 		return m.renderWithOverlay(m.renderSettingsView())
 	}
+	if m.mode == ModeCreateProject {
+		return m.renderWithOverlay(m.renderCreateProjectForm())
+	}
 
 	b.WriteString("\n")
 	b.WriteString(m.renderStatusBar())
@@ -76,7 +79,7 @@ func (m *Model) renderHeader() string {
 	var filterSection string
 	if m.mode == ModeFilter {
 		filterSection = m.renderFilterInput()
-	} else if m.filterQuery != "" || m.filterProjectID != "" {
+	} else if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
 		filterSection = m.renderActiveFilter()
 	} else {
 		filterSection = m.renderFilterHint()
@@ -86,7 +89,7 @@ func (m *Model) renderHeader() string {
 	ticketCount := m.globalStore.Count()
 	visibleCount := m.countVisibleTickets()
 	var stats string
-	if m.filterQuery != "" || m.filterProjectID != "" {
+	if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
 		stats = dimStyle.Render(fmt.Sprintf("showing %d of %d", visibleCount, ticketCount))
 	} else {
 		stats = dimStyle.Render(fmt.Sprintf("%d projects, %d tickets", projectCount, ticketCount))
@@ -554,16 +557,17 @@ func (m *Model) renderStatusBar() string {
 		bg   lipgloss.Color
 	}
 	modeConfigs := map[Mode]modeConfig{
-		ModeNormal:       {"◆", colorBlue},
-		ModeInsert:       {"✎", colorGreen},
-		ModeCommand:      {":", colorMauve},
-		ModeCreateTicket: {"+", colorGreen},
-		ModeEditTicket:   {"✎", colorYellow},
-		ModeAgentView:    {"▶", colorTeal},
-		ModeSettings:     {"⚙", colorMauve},
-		ModeHelp:         {"?", colorBlue},
-		ModeConfirm:      {"!", colorRed},
-		ModeFilter:       {"/", colorTeal},
+		ModeNormal:        {"◆", colorBlue},
+		ModeInsert:        {"✎", colorGreen},
+		ModeCommand:       {":", colorMauve},
+		ModeCreateTicket:  {"+", colorGreen},
+		ModeEditTicket:    {"✎", colorYellow},
+		ModeAgentView:     {"▶", colorTeal},
+		ModeSettings:      {"⚙", colorMauve},
+		ModeHelp:          {"?", colorBlue},
+		ModeConfirm:       {"!", colorRed},
+		ModeFilter:        {"/", colorTeal},
+		ModeCreateProject: {"📁", colorGreen},
 	}
 	cfg := modeConfigs[m.mode]
 	if cfg.bg == "" {
@@ -635,11 +639,11 @@ func (m *Model) contextualHints(hintStyle lipgloss.Style, sep string) string {
 	case ModeNormal:
 		if m.sidebarFocused {
 			return hintStyle.Render("j/k") + dimStyle.Render(" navigate") + sep +
-				hintStyle.Render("Enter") + dimStyle.Render(" select project") + sep +
-				hintStyle.Render("l") + dimStyle.Render(" back to board")
+				hintStyle.Render("Space/Enter") + dimStyle.Render(" toggle") + sep +
+				hintStyle.Render("l") + dimStyle.Render(" board")
 		}
 
-		if m.filterQuery != "" || m.filterProjectID != "" {
+		if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
 			return hintStyle.Render("Esc") + dimStyle.Render(" clear filter") + sep +
 				hintStyle.Render("/") + dimStyle.Render(" edit filter") + sep +
 				hintStyle.Render("?") + dimStyle.Render(" help")
@@ -1493,9 +1497,17 @@ func (m *Model) renderActiveFilter() string {
 		Padding(0, 1)
 
 	filterText := m.filterQuery
-	if m.filterProjectID != "" && m.filterQuery == "" {
-		if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
-			filterText = "@" + p.Name
+	if len(m.filterProjectIDs) > 0 && m.filterQuery == "" {
+		count := len(m.filterProjectIDs)
+		if count == 1 {
+			for id := range m.filterProjectIDs {
+				if p := m.globalStore.GetProject(id); p != nil {
+					filterText = "@" + p.Name
+				}
+				break
+			}
+		} else {
+			filterText = fmt.Sprintf("%d projects", count)
 		}
 	}
 
@@ -1576,6 +1588,42 @@ func (m *Model) renderAddProjectForm() string {
 		"  " + dimStyle.Render("⏎ Add  Esc Cancel")
 }
 
+func (m *Model) renderCreateProjectForm() string {
+	titleStyle := lipgloss.NewStyle().
+		Foreground(colorGreen).
+		Bold(true)
+
+	labelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+
+	var errorLine string
+	if m.notification != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(colorRed).Bold(true)
+		errorLine = "\n  " + errorStyle.Render("⚠ "+m.notification) + "\n"
+	}
+
+	content := titleStyle.Render("◈ Add Project") + "\n\n" +
+		"  " + labelStyle.Render("Repository Path") + "\n" +
+		"  " + descStyle.Render("Absolute path to a git repository") + "\n" +
+		"  " + m.addProjectPath.View() + errorLine + "\n" +
+		"  " + descStyle.Render("The project name will be derived from the directory name.") + "\n" +
+		"  " + descStyle.Render("Example: ~/projects/myapp → \"myapp\"") + "\n\n" +
+		"  " + lipgloss.NewStyle().Foreground(colorGreen).Render("[Enter]") + dimStyle.Render(" Add  ") +
+		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
+
+	formWidth := min(55, m.width-4)
+	if formWidth < 40 {
+		formWidth = 40
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorGreen).
+		Padding(1, 2).
+		Width(formWidth).
+		Render(content)
+}
+
 func shortenPath(path string) string {
 	home, _ := os.UserHomeDir()
 	if strings.HasPrefix(path, home) {
@@ -1608,9 +1656,8 @@ func (m *Model) renderSidebar() string {
 		Foreground(colorText).
 		Padding(0, 1)
 
-	mutedStyle := lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Padding(0, 1)
+	checkStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	uncheckStyle := lipgloss.NewStyle().Foreground(colorMuted)
 
 	var lines []string
 
@@ -1618,19 +1665,23 @@ func (m *Model) renderSidebar() string {
 	lines = append(lines, "")
 
 	allCount := m.globalStore.Count()
-	allLabel := fmt.Sprintf("All (%d)", allCount)
-	if m.sidebarIndex == 0 {
-		if m.sidebarFocused {
-			lines = append(lines, selectedStyle.Render("● "+allLabel))
-		} else {
-			lines = append(lines, normalStyle.Render("● "+allLabel))
-		}
+	selectedCount := len(m.filterProjectIDs)
+	noFilter := selectedCount == 0
+	var allLabel string
+	if noFilter {
+		allLabel = fmt.Sprintf("[✓] All (%d)", allCount)
+	} else if selectedCount == len(projects) {
+		allLabel = fmt.Sprintf("[✓] All (%d)", allCount)
 	} else {
-		if m.filterProjectID == "" {
-			lines = append(lines, normalStyle.Render("● "+allLabel))
-		} else {
-			lines = append(lines, mutedStyle.Render("  "+allLabel))
-		}
+		allLabel = fmt.Sprintf("[-] %d/%d", selectedCount, len(projects))
+	}
+
+	if m.sidebarIndex == 0 && m.sidebarFocused {
+		lines = append(lines, selectedStyle.Render(allLabel))
+	} else if noFilter || selectedCount == len(projects) {
+		lines = append(lines, checkStyle.Render(allLabel))
+	} else {
+		lines = append(lines, normalStyle.Render(allLabel))
 	}
 
 	lines = append(lines, "")
@@ -1643,16 +1694,24 @@ func (m *Model) renderSidebar() string {
 				count++
 			}
 		}
-		label := fmt.Sprintf("%s (%d)", p.Name, count)
 
-		isFiltered := m.filterProjectID == p.ID
+		isSelected := m.filterProjectIDs[p.ID]
+		var checkbox string
+		if noFilter {
+			checkbox = "    "
+		} else if isSelected {
+			checkbox = "[✓] "
+		} else {
+			checkbox = "[ ] "
+		}
+		label := fmt.Sprintf("%s%s (%d)", checkbox, p.Name, count)
 
 		if m.sidebarIndex == idx && m.sidebarFocused {
-			lines = append(lines, selectedStyle.Render("● "+label))
-		} else if isFiltered {
-			lines = append(lines, normalStyle.Render("● "+label))
+			lines = append(lines, selectedStyle.Render(label))
+		} else if isSelected {
+			lines = append(lines, checkStyle.Render(label))
 		} else {
-			lines = append(lines, mutedStyle.Render("  "+label))
+			lines = append(lines, uncheckStyle.Render(label))
 		}
 	}
 
@@ -1671,7 +1730,7 @@ func (m *Model) renderSidebar() string {
 
 	hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	if m.sidebarFocused {
-		lines = append(lines, hintStyle.Render("  j/k ⏎select l→exit"))
+		lines = append(lines, hintStyle.Render("  j/k ⏎toggle a/d"))
 	} else {
 		lines = append(lines, hintStyle.Render("  h→focus  [hide"))
 	}
