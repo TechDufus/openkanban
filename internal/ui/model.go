@@ -117,6 +117,9 @@ type Model struct {
 	blockerListIndex   int
 	blockerFilterInput textinput.Model
 
+	formScrollOffset int
+	formFieldLines   map[int]int
+
 	notification string
 	notifyTime   time.Time
 
@@ -228,6 +231,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		addProjectPath:     ap,
 		blockerFilterInput: bf,
 		selectedBlockers:   make(map[board.TicketID]bool),
+		formFieldLines:     make(map[int]int),
 		spinner:            sp,
 		panes:              make(map[board.TicketID]*terminal.Pane),
 		statusDetector:     agent.NewStatusDetector(),
@@ -973,7 +977,15 @@ func (m *Model) handleAgentViewMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleTicketFormMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.formScrollOffset -= 3
+		if m.formScrollOffset < 0 {
+			m.formScrollOffset = 0
+		}
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.formScrollOffset += 3
 		return m, nil
 	}
 
@@ -1060,6 +1072,17 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		m.editingTicketID = ""
 		m.branchLocked = false
 		m.showAddProjectForm = false
+		return m, nil
+
+	case "ctrl+u", "pgup":
+		m.formScrollOffset -= m.formViewportHeight() / 2
+		if m.formScrollOffset < 0 {
+			m.formScrollOffset = 0
+		}
+		return m, nil
+
+	case "ctrl+d", "pgdown":
+		m.formScrollOffset += m.formViewportHeight() / 2
 		return m, nil
 
 	case "tab":
@@ -1961,6 +1984,7 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.selectedBlockers = make(map[board.TicketID]bool)
 	m.blockerListIndex = 0
 	m.blockerFilterInput.Reset()
+	m.formScrollOffset = 0
 
 	m.blurAllFormFields()
 	m.titleInput.Focus()
@@ -2007,6 +2031,7 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 	}
 	m.blockerListIndex = 0
 	m.blockerFilterInput.Reset()
+	m.formScrollOffset = 0
 
 	m.blurAllFormFields()
 	m.titleInput.Focus()
