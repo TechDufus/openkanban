@@ -1374,9 +1374,6 @@ func (m *Model) createProjectFromPath() (tea.Model, tea.Cmd) {
 	name := filepath.Base(absPath)
 
 	newProject := project.NewProject(name, absPath)
-	if m.config.Defaults.DefaultAgent != "" {
-		newProject.Settings.DefaultAgent = m.config.Defaults.DefaultAgent
-	}
 	if m.config.Defaults.BranchPrefix != "" {
 		newProject.Settings.BranchPrefix = m.config.Defaults.BranchPrefix
 	}
@@ -1686,13 +1683,15 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 	case "agent":
 		agents := m.getAgentNames()
 		current := m.config.Defaults.DefaultAgent
-		nextAgent := agents[0]
+		currentIndex := 0
 		for i, a := range agents {
-			if a == current && i+1 < len(agents) {
-				nextAgent = agents[i+1]
+			if a == current {
+				currentIndex = i
 				break
 			}
 		}
+		nextIndex := (currentIndex + 1) % len(agents)
+		nextAgent := agents[nextIndex]
 		m.applySettingsValue(field.key, nextAgent)
 		m.notify("Default agent: " + nextAgent)
 		return m, nil
@@ -2636,7 +2635,7 @@ func (m *Model) getAgentNames() []string {
 		names = append(names, name)
 	}
 	if len(names) == 0 {
-		return []string{"opencode", "claude", "aider"}
+		return []string{"opencode", "claude", "gemini", "codex", "aider"}
 	}
 	sort.Strings(names)
 	return names
