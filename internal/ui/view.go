@@ -626,7 +626,6 @@ func (m *Model) contextualHints(hintStyle lipgloss.Style, sep string) string {
 		}
 		return hintStyle.Render("Tab") + dimStyle.Render(" next") + sep +
 			hintStyle.Render("Ctrl+S") + dimStyle.Render(" "+action) + sep +
-			hintStyle.Render("Ctrl+U/D") + dimStyle.Render(" scroll") + sep +
 			hintStyle.Render("Esc") + dimStyle.Render(" cancel")
 
 	case ModeAgentView:
@@ -913,12 +912,14 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	var lines []string
+	fieldEndLines := make(map[int]int)
 
 	fieldStartLines[formFieldTitle] = currentLine
 	lines = append(lines, titleFocus+titleLabel.Render("Title")+"  "+titleCharStyle.Render(titleCharCount))
 	lines = append(lines, "  "+descriptionStyle.Render("Brief summary of the task"))
 	lines = append(lines, "  "+m.titleInput.View())
 	lines = append(lines, "")
+	fieldEndLines[formFieldTitle] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldDescription] = currentLine
@@ -929,6 +930,7 @@ func (m *Model) renderTicketForm() string {
 		lines = append(lines, "  "+dl)
 	}
 	lines = append(lines, "")
+	fieldEndLines[formFieldDescription] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldBranch] = currentLine
@@ -936,6 +938,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+branchDesc)
 	lines = append(lines, "  "+branchField)
 	lines = append(lines, "")
+	fieldEndLines[formFieldBranch] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldLabels] = currentLine
@@ -943,6 +946,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+descriptionStyle.Render("Comma-separated tags (e.g. bug, urgent)"))
 	lines = append(lines, "  "+m.labelsInput.View())
 	lines = append(lines, "")
+	fieldEndLines[formFieldLabels] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldPriority] = currentLine
@@ -950,6 +954,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+descriptionStyle.Render("1 = highest, 5 = lowest"))
 	lines = append(lines, "  "+priorityField)
 	lines = append(lines, "")
+	fieldEndLines[formFieldPriority] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldWorktree] = currentLine
@@ -957,6 +962,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+descriptionStyle.Render("Use isolated worktree or work in main repo"))
 	lines = append(lines, "  "+worktreeField)
 	lines = append(lines, "")
+	fieldEndLines[formFieldWorktree] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldAgent] = currentLine
@@ -964,6 +970,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+descriptionStyle.Render("AI agent to use for this ticket"))
 	lines = append(lines, "  "+agentField)
 	lines = append(lines, "")
+	fieldEndLines[formFieldAgent] = len(lines) - 1
 	currentLine = len(lines)
 
 	fieldStartLines[formFieldBlockedBy] = currentLine
@@ -973,6 +980,7 @@ func (m *Model) renderTicketForm() string {
 	for _, bl := range blockerLines {
 		lines = append(lines, bl)
 	}
+	fieldEndLines[formFieldBlockedBy] = len(lines) - 1
 	currentLine = len(lines)
 
 	if !isEdit {
@@ -985,6 +993,7 @@ func (m *Model) renderTicketForm() string {
 		for _, pl := range projectLines {
 			lines = append(lines, pl)
 		}
+		fieldEndLines[formFieldProject] = len(lines) - 1
 	}
 
 	m.formFieldLines = fieldStartLines
@@ -994,12 +1003,21 @@ func (m *Model) renderTicketForm() string {
 	needsScroll := totalLines > viewportHeight
 
 	if needsScroll {
-		if startLine, ok := fieldStartLines[m.ticketFormField]; ok {
-			if startLine < m.formScrollOffset {
+		startLine, hasStart := fieldStartLines[m.ticketFormField]
+		endLine, hasEnd := fieldEndLines[m.ticketFormField]
+		if hasStart && hasEnd {
+			fieldHeight := endLine - startLine + 1
+			effectiveViewport := viewportHeight - 2
+
+			if fieldHeight <= effectiveViewport {
+				if endLine >= m.formScrollOffset+effectiveViewport {
+					m.formScrollOffset = endLine - effectiveViewport + 1
+				}
+				if startLine < m.formScrollOffset {
+					m.formScrollOffset = startLine
+				}
+			} else {
 				m.formScrollOffset = startLine
-			}
-			if startLine >= m.formScrollOffset+viewportHeight-2 {
-				m.formScrollOffset = startLine - viewportHeight + 4
 			}
 		}
 		maxOffset := totalLines - viewportHeight
@@ -1017,22 +1035,33 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	var visibleLines []string
-	endLine := m.formScrollOffset + viewportHeight
+	scrollIndicatorStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+
+	hasAboveIndicator := needsScroll && m.formScrollOffset > 0
+	hasBelowIndicator := needsScroll && m.formScrollOffset+viewportHeight < totalLines
+
+	availableForContent := viewportHeight
+	if hasAboveIndicator {
+		availableForContent--
+	}
+	if hasBelowIndicator {
+		availableForContent--
+	}
+
+	endLine := m.formScrollOffset + availableForContent
 	if endLine > totalLines {
 		endLine = totalLines
 	}
 
-	scrollIndicatorStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
-	if needsScroll && m.formScrollOffset > 0 {
-		aboveCount := m.formScrollOffset
-		visibleLines = append(visibleLines, scrollIndicatorStyle.Render(fmt.Sprintf("  ▲ %d more above", aboveCount)))
+	if hasAboveIndicator {
+		visibleLines = append(visibleLines, scrollIndicatorStyle.Render(fmt.Sprintf("  ▲ %d more above", m.formScrollOffset)))
 	}
 
 	for i := m.formScrollOffset; i < endLine; i++ {
 		visibleLines = append(visibleLines, lines[i])
 	}
 
-	if needsScroll && endLine < totalLines {
+	if hasBelowIndicator {
 		belowCount := totalLines - endLine
 		visibleLines = append(visibleLines, scrollIndicatorStyle.Render(fmt.Sprintf("  ▼ %d more below", belowCount)))
 	}
@@ -1042,9 +1071,6 @@ func (m *Model) renderTicketForm() string {
 	footerHints := lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Next  ") +
 		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"  ") +
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
-	if needsScroll {
-		footerHints += "  " + dimStyle.Render("Scroll: wheel or Ctrl+U/D")
-	}
 	content += "\n\n  " + footerHints
 
 	formWidth := min(60, m.width-4)
