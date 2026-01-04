@@ -87,6 +87,10 @@ type Model struct {
 	hoverColumn int
 	hoverTicket int
 
+	lastClickTime   time.Time
+	lastClickColumn int
+	lastClickTicket int
+
 	columnTickets [][]*board.Ticket
 
 	showHelp    bool
@@ -702,6 +706,22 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.sidebarFocused = false
 				m.activeColumn = col
 				if ticket >= 0 {
+					now := time.Now()
+					isDoubleClick := ticket == m.lastClickTicket &&
+						col == m.lastClickColumn &&
+						now.Sub(m.lastClickTime) < 400*time.Millisecond
+
+					if isDoubleClick {
+						m.lastClickTime = time.Time{}
+						m.lastClickColumn = -1
+						m.lastClickTicket = -1
+						return m.handleDoubleClick()
+					}
+
+					m.lastClickTime = now
+					m.lastClickColumn = col
+					m.lastClickTicket = ticket
+
 					m.activeTicket = ticket
 					m.dragging = true
 					m.dragSourceColumn = col
@@ -970,6 +990,13 @@ func (m *Model) handleAgentViewMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	pane, ok := m.panes[m.focusedPane]
 	if !ok {
 		return m, nil
+	}
+
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if msg.Y == 0 && msg.X >= m.width-25 {
+			m.mode = ModeNormal
+			return m, nil
+		}
 	}
 
 	pane.HandleMouse(msg)
@@ -2044,6 +2071,20 @@ func (m *Model) attachToAgent() (tea.Model, tea.Cmd) {
 	paneHeight := m.height - 2
 	pane.SetSize(m.width, paneHeight)
 	return m, nil
+}
+
+func (m *Model) handleDoubleClick() (tea.Model, tea.Cmd) {
+	ticket := m.selectedTicket()
+	if ticket == nil {
+		return m, nil
+	}
+
+	pane, ok := m.panes[ticket.ID]
+	if ok && pane.Running() {
+		return m.attachToAgent()
+	}
+
+	return m.spawnAgent()
 }
 
 func (m *Model) confirmDeleteTicket() (tea.Model, tea.Cmd) {
