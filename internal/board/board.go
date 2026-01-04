@@ -82,6 +82,7 @@ type Ticket struct {
 	AgentStatus    AgentStatus `json:"agent_status"`
 	AgentSpawnedAt *time.Time  `json:"agent_spawned_at,omitempty"`
 	AgentPort      int         `json:"agent_port,omitempty"`
+	AgentSessionID string      `json:"agent_session_id,omitempty"`
 
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`

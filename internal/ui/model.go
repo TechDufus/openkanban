@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+
 	"github.com/techdufus/openkanban/internal/agent"
 	"github.com/techdufus/openkanban/internal/board"
 	"github.com/techdufus/openkanban/internal/config"
@@ -179,8 +179,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	ap.Width = 40
 
 	sp := spinner.New()
-	sp.Spinner = spinner.Meter
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1"))
+	sp.Spinner = spinner.Dot
 
 	worktreeMgrs := make(map[string]*git.WorktreeManager)
 	for _, p := range globalStore.Projects() {
@@ -262,6 +261,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.mode == ModeSpawning {
 		switch msg := msg.(type) {
+		case agentStatusMsg:
+			return m, tea.Batch(
+				m.pollAgentStatusesAsync(),
+				tickAgentStatus(m.agentMgr.StatusPollInterval()),
+			)
 		case spawnReadyMsg:
 			if msg.ticketID != m.spawningTicketID {
 				return m, nil
@@ -270,7 +274,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ticket, _ := m.globalStore.Get(msg.ticketID)
 			if ticket != nil {
 				ticket.AgentType = m.spawningAgent
-				ticket.AgentStatus = board.AgentIdle
+				ticket.AgentStatus = board.AgentNone
 				if ticket.AgentSpawnedAt == nil {
 					now := time.Now()
 					ticket.AgentSpawnedAt = &now
@@ -381,8 +385,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTerminalMsg(msg)
 
 	case terminal.ExitMsg:
-		delete(m.panes, board.TicketID(msg.PaneID))
-		if m.focusedPane == board.TicketID(msg.PaneID) {
+		ticketID := board.TicketID(msg.PaneID)
+		delete(m.panes, ticketID)
+		if ticket, _ := m.globalStore.Get(ticketID); ticket != nil {
+			ticket.AgentStatus = board.AgentNone
+			m.saveTicket(ticket)
+		}
+		if m.focusedPane == ticketID {
 			m.mode = ModeNormal
 			m.focusedPane = ""
 			m.notify("Agent exited")
@@ -2184,7 +2193,6 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 
 	mgr := m.worktreeMgrs[proj.ID]
 	cfg := m.config
-	opencodeServer := m.opencodeServer
 
 	return func() tea.Msg {
 		if mgr == nil {
@@ -2255,23 +2263,18 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 			command := agentCfg.Command
 			sessionID := agent.FindOpencodeSession(worktreePath)
 
-			if sessionID != "" && opencodeServer != nil && opencodeServer.IsRunning() {
-				command = "opencode"
-				args = []string{"attach", opencodeServer.URL(), "--dir", worktreePath, "--session", sessionID}
-			} else {
-				args = []string{worktreePath}
-				if isNewSession {
-					if promptTemplate != "" {
-						prompt := agent.BuildContextPrompt(promptTemplate, ticket)
-						if prompt != "" {
-							args = append(args, "--prompt", prompt)
-						}
+			args = []string{worktreePath, "--port", fmt.Sprintf("%d", agentPort)}
+			if isNewSession {
+				if promptTemplate != "" {
+					prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+					if prompt != "" {
+						args = append(args, "--prompt", prompt)
 					}
-				} else if sessionID != "" {
-					args = append(args, "--session", sessionID)
-				} else {
-					args = append(args, "--continue")
 				}
+			} else if sessionID != "" {
+				args = append(args, "--session", sessionID)
+			} else {
+				args = append(args, "--continue")
 			}
 			return spawnReadyMsg{
 				ticketID:     ticketID,
@@ -2485,6 +2488,7 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 		worktreePath    string
 		branchName      string
 		agentPort       int
+		agentSessionID  string
 		running         bool
 		terminalContent string
 	}
@@ -2505,12 +2509,14 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 			worktreePath:    worktreePath,
 			branchName:      ticket.BranchName,
 			agentPort:       ticket.AgentPort,
+			agentSessionID:  ticket.AgentSessionID,
 			running:         pane.Running(),
 			terminalContent: pane.GetContent(),
 		})
 	}
 
 	detector := m.statusDetector
+	globalStore := m.globalStore
 
 	return func() tea.Msg {
 		results := make(agentStatusResultMsg)
@@ -2520,17 +2526,25 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 				continue
 			}
 
-			sessionID := p.branchName
+			sessionID := p.agentSessionID
+			if sessionID == "" && p.agentType == "opencode" && p.worktreePath != "" {
+				if id := agent.FindOpencodeSession(p.worktreePath); id != "" {
+					sessionID = id
+					if ticket, _ := globalStore.Get(p.ticketID); ticket != nil {
+						ticket.AgentSessionID = sessionID
+						globalStore.Save(ticket)
+					}
+				}
+			}
+			if sessionID == "" {
+				sessionID = p.branchName
+			}
 			if sessionID == "" {
 				sessionID = string(p.ticketID)
 			}
-			if p.agentType == "opencode" && p.worktreePath != "" {
-				if id := agent.FindOpencodeSession(p.worktreePath); id != "" {
-					sessionID = id
-				}
-			}
 
-			results[p.ticketID] = detector.DetectStatusWithPort(p.agentType, sessionID, p.worktreePath, p.agentPort, true, p.terminalContent)
+			status := detector.DetectStatusWithPort(p.agentType, sessionID, p.worktreePath, p.agentPort, true, p.terminalContent)
+			results[p.ticketID] = status
 		}
 		return results
 	}

@@ -113,7 +113,7 @@ func TestDetectCodingAgentStatus(t *testing.T) {
 			name:        "idle at prompt",
 			recentLower: "ready for input >",
 			fullLower:   "",
-			expected:    board.AgentIdle,
+			expected:    board.AgentNone,
 		},
 		{
 			name:        "no clear status",

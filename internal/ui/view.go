@@ -100,7 +100,6 @@ func (m *Model) renderHeader() string {
 		}
 		ticket, _ := m.globalStore.Get(ticketID)
 		if ticket == nil {
-			workingCount++
 			continue
 		}
 
@@ -111,8 +110,6 @@ func (m *Model) renderHeader() string {
 			waitingCount++
 		case board.AgentIdle:
 			idleCount++
-		default:
-			workingCount++
 		}
 	}
 
@@ -342,9 +339,6 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	isRunning := hasPane && pane.Running()
 
 	effectiveStatus := ticket.AgentStatus
-	if isRunning && effectiveStatus == board.AgentNone {
-		effectiveStatus = board.AgentWorking
-	}
 
 	var projectBadge string
 	if proj := m.globalStore.GetProjectForTicket(ticket); proj != nil {
