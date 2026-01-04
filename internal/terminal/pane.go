@@ -640,6 +640,12 @@ func buildCleanEnv() []string {
 		if key == "CLAUDE" || strings.HasPrefix(key, "CLAUDE_") {
 			continue
 		}
+		if key == "GEMINI" || strings.HasPrefix(key, "GEMINI_") {
+			continue
+		}
+		if key == "CODEX" || strings.HasPrefix(key, "CODEX_") {
+			continue
+		}
 		env = append(env, e)
 	}
 	env = append(env, "TERM=xterm-256color")

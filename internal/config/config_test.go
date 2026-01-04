@@ -10,10 +10,9 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	// DefaultAgent should be one of the known agents (auto-detected based on availability)
-	knownAgents := map[string]bool{"opencode": true, "claude": true, "aider": true}
+	knownAgents := map[string]bool{"opencode": true, "claude": true, "gemini": true, "codex": true, "aider": true}
 	if !knownAgents[cfg.Defaults.DefaultAgent] {
-		t.Errorf("Defaults.DefaultAgent = %q; want one of opencode, claude, aider", cfg.Defaults.DefaultAgent)
+		t.Errorf("Defaults.DefaultAgent = %q; want one of opencode, claude, gemini, codex, aider", cfg.Defaults.DefaultAgent)
 	}
 
 	if cfg.Defaults.BranchPrefix != "task/" {
@@ -40,7 +39,7 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Defaults.AutoCreateBranch should be true")
 	}
 
-	for _, agent := range []string{"claude", "opencode", "aider"} {
+	for _, agent := range []string{"claude", "opencode", "gemini", "codex", "aider"} {
 		if _, ok := cfg.Agents[agent]; !ok {
 			t.Errorf("expected agent %q to be defined", agent)
 		}
@@ -62,6 +61,22 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if len(aider.Args) != 1 || aider.Args[0] != "--yes" {
 		t.Errorf("aider.Args = %v; want [--yes]", aider.Args)
+	}
+
+	gemini := cfg.Agents["gemini"]
+	if gemini.Command != "gemini" {
+		t.Errorf("gemini.Command = %q; want %q", gemini.Command, "gemini")
+	}
+	if len(gemini.Args) != 1 || gemini.Args[0] != "--yolo" {
+		t.Errorf("gemini.Args = %v; want [--yolo]", gemini.Args)
+	}
+
+	codex := cfg.Agents["codex"]
+	if codex.Command != "codex" {
+		t.Errorf("codex.Command = %q; want %q", codex.Command, "codex")
+	}
+	if len(codex.Args) != 1 || codex.Args[0] != "--full-auto" {
+		t.Errorf("codex.Args = %v; want [--full-auto]", codex.Args)
 	}
 
 	if cfg.UI.Theme != "catppuccin-mocha" {
@@ -437,7 +452,7 @@ func TestAgentPriority(t *testing.T) {
 		t.Errorf("AgentPriority[0] = %q; want %q", AgentPriority[0], "opencode")
 	}
 
-	expected := []string{"opencode", "claude", "aider"}
+	expected := []string{"opencode", "claude", "gemini", "codex", "aider"}
 	if len(AgentPriority) != len(expected) {
 		t.Errorf("AgentPriority has %d items; want %d", len(AgentPriority), len(expected))
 	}

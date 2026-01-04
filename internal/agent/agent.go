@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -55,6 +56,46 @@ func normalizePath(path string) string {
 		return resolved
 	}
 	return cleaned
+}
+
+// FindGeminiSession finds the most recent Gemini session for a directory.
+// Returns "latest" to signal --resume without ID (Gemini hashes project paths).
+func FindGeminiSession(directory string) string {
+	if _, err := exec.LookPath("gemini"); err != nil {
+		return ""
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	geminiDir := filepath.Join(homeDir, ".gemini", "tmp")
+	if _, err := os.Stat(geminiDir); os.IsNotExist(err) {
+		return ""
+	}
+
+	return "latest"
+}
+
+// FindCodexSession finds the most recent Codex session for a directory.
+// Returns "last" to signal use of "codex resume --last".
+func FindCodexSession(directory string) string {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return ""
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	if _, err := os.Stat(codexDir); os.IsNotExist(err) {
+		return ""
+	}
+
+	return "last"
 }
 
 // Manager handles AI agent configuration and status polling.

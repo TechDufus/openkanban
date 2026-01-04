@@ -2424,6 +2424,55 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 				branchName:   branchName,
 				baseBranch:   baseBranch,
 			}
+		case "gemini":
+			command := agentCfg.Command
+			if !isNewSession {
+				sessionID := agent.FindGeminiSession(worktreePath)
+				if sessionID != "" {
+					args = append(args, "--resume")
+				}
+			} else if promptTemplate != "" {
+				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+				if prompt != "" {
+					args = append(args, "-i", prompt)
+				}
+			}
+			return spawnReadyMsg{
+				ticketID:     ticketID,
+				pane:         pane,
+				command:      command,
+				args:         args,
+				worktreePath: worktreePath,
+				branchName:   branchName,
+				baseBranch:   baseBranch,
+			}
+		case "codex":
+			command := agentCfg.Command
+			if !isNewSession {
+				sessionID := agent.FindCodexSession(worktreePath)
+				if sessionID != "" {
+					if sessionID == "last" {
+						args = []string{"resume", "--last"}
+					} else {
+						args = []string{"resume", sessionID}
+					}
+					args = append(args, agentCfg.Args...)
+				}
+			} else if promptTemplate != "" {
+				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+				if prompt != "" {
+					args = append(args, prompt)
+				}
+			}
+			return spawnReadyMsg{
+				ticketID:     ticketID,
+				pane:         pane,
+				command:      command,
+				args:         args,
+				worktreePath: worktreePath,
+				branchName:   branchName,
+				baseBranch:   baseBranch,
+			}
 		}
 
 		return spawnReadyMsg{

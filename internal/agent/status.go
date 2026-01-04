@@ -99,7 +99,7 @@ func (d *StatusDetector) detectFromTerminalContent(agentType, content string) bo
 	recentLower := strings.ToLower(recentContent)
 
 	switch agentType {
-	case "opencode", "claude":
+	case "opencode", "claude", "gemini", "codex":
 		return d.detectCodingAgentStatus(recentLower, contentLower)
 	default:
 		return d.detectGenericAgentStatus(recentLower)

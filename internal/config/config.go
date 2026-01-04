@@ -83,9 +83,63 @@ Branch: {{.BranchName}} (from {{.BaseBranch}})
 
 This is your assigned task. Implement what the description specifies.`
 
+const defaultGeminiPrompt = `You have been spawned by OpenKanban, a kanban board system for managing development tasks.
+
+## Your Assignment
+
+You are now working on a specific ticket. This ticket represents a discrete unit of work that needs to be completed.
+
+**Ticket Title:** {{.Title}}
+
+**Ticket Description:**
+{{.Description}}
+
+## Technical Context
+
+- **Git Branch:** {{.BranchName}}
+- **Base Branch:** {{.BaseBranch}}
+- **Working Directory:** This session is scoped to an isolated git worktree for this ticket
+
+## Expectations
+
+1. Focus exclusively on completing the work described in this ticket
+2. The ticket description above is your primary specification - implement what it describes
+3. If the description is unclear or incomplete, ask clarifying questions before proceeding
+4. Make commits as appropriate for the work being done
+5. When the work is complete, summarize what was accomplished
+
+Begin by analyzing the ticket requirements and proposing your approach.`
+
+const defaultCodexPrompt = `You have been spawned by OpenKanban, a kanban board system for managing development tasks.
+
+## Your Assignment
+
+You are now working on a specific ticket. This ticket represents a discrete unit of work that needs to be completed.
+
+**Ticket Title:** {{.Title}}
+
+**Ticket Description:**
+{{.Description}}
+
+## Technical Context
+
+- **Git Branch:** {{.BranchName}}
+- **Base Branch:** {{.BaseBranch}}
+- **Working Directory:** This session is scoped to an isolated git worktree for this ticket
+
+## Expectations
+
+1. Focus exclusively on completing the work described in this ticket
+2. The ticket description above is your primary specification - implement what it describes
+3. If the description is unclear or incomplete, ask clarifying questions before proceeding
+4. Make commits as appropriate for the work being done
+5. When the work is complete, summarize what was accomplished
+
+Begin by analyzing the ticket requirements and proposing your approach.`
+
 // AgentPriority defines the order in which agents are preferred when auto-detecting.
 // The first available agent in this list becomes the default.
-var AgentPriority = []string{"opencode", "claude", "aider"}
+var AgentPriority = []string{"opencode", "claude", "gemini", "codex", "aider"}
 
 // DetectAvailableAgent returns the first agent from the priority list
 // whose command is available in PATH. Falls back to the first priority
@@ -186,6 +240,20 @@ func defaultAgents() map[string]AgentConfig {
 			Env:        map[string]string{},
 			StatusFile: "",
 			InitPrompt: defaultAiderPrompt,
+		},
+		"gemini": {
+			Command:    "gemini",
+			Args:       []string{"--yolo"},
+			Env:        map[string]string{},
+			StatusFile: "",
+			InitPrompt: defaultGeminiPrompt,
+		},
+		"codex": {
+			Command:    "codex",
+			Args:       []string{"--full-auto"},
+			Env:        map[string]string{},
+			StatusFile: "",
+			InitPrompt: defaultCodexPrompt,
 		},
 	}
 }
