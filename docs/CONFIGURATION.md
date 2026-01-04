@@ -26,6 +26,14 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
       "args": ["--dangerously-skip-permissions"],
       "status_file": ".claude/status.json"
     },
+    "gemini": {
+      "command": "gemini",
+      "args": ["--yolo"]
+    },
+    "codex": {
+      "command": "codex",
+      "args": ["--full-auto"]
+    },
     "aider": {
       "command": "aider",
       "args": ["--yes"]
@@ -171,7 +179,7 @@ Press `O` to open the settings menu. You can configure these options without edi
 
 | Setting | Description |
 |---------|-------------|
-| Default Agent | Which agent to spawn (opencode, claude, aider) |
+| Default Agent | Which agent to spawn (opencode, claude, gemini, codex, aider) |
 | Confirm Quit | Prompt before quitting with running agents |
 | Branch Prefix | Prefix for auto-generated branch names |
 | Delete Worktree | Remove git worktree when deleting tickets |

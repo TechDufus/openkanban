@@ -37,7 +37,7 @@ OpenKanban gives you a single view of all your work. Each ticket gets its own gi
 
 - **Tickets as worktrees** - Each task gets an isolated git branch
 - **Embedded terminals** - Agents run inside the TUI, not in random terminal tabs
-- **Any agent** - OpenCode, Claude Code, Aider, or whatever CLI tool you prefer
+- **Any agent** - OpenCode, Claude Code, Gemini, Codex, Aider, or whatever CLI tool you prefer
 - **Multi-project** - Manage tickets across all your repositories from one board
 
 ## Install

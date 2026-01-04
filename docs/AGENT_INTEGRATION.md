@@ -21,6 +21,8 @@ Agents with native support and session continuation.
 |-------|---------|----------------|-------|
 | OpenCode | `opencode` | `--session` flag | Native session lookup |
 | Claude Code | `claude` | `--continue` flag | Continues last session |
+| Gemini CLI | `gemini` | `--resume` flag | Auto-approve with `--yolo` |
+| Codex CLI | `codex` | `resume --last` | Auto-approve with `--full-auto` |
 | Aider | `aider` | N/A | Use `--yes` flag |
 
 ### Tier 2: Generic Support
@@ -360,6 +362,16 @@ case agentStatusMsg:
       "status_file": ".claude/status.json",
       "init_prompt": "Custom prompt for Claude..."
     },
+    "gemini": {
+      "command": "gemini",
+      "args": ["--yolo"],
+      "init_prompt": "Custom prompt for Gemini..."
+    },
+    "codex": {
+      "command": "codex",
+      "args": ["--full-auto"],
+      "init_prompt": "Custom prompt for Codex..."
+    },
     "aider": {
       "command": "aider",
       "args": ["--yes"],
@@ -393,6 +405,12 @@ func buildCleanEnv() []string {
             continue
         }
         if key == "CLAUDE" || strings.HasPrefix(key, "CLAUDE_") {
+            continue
+        }
+        if key == "GEMINI" || strings.HasPrefix(key, "GEMINI_") {
+            continue
+        }
+        if key == "CODEX" || strings.HasPrefix(key, "CODEX_") {
             continue
         }
         env = append(env, e)

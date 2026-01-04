@@ -94,4 +94,4 @@ goreleaser release --snapshot       # Local release build
 - **Elm architecture**: Model → Update → View cycle, immutable-ish state
 - **Status poll interval**: Configurable via `opencode.poll_interval` (default 1s)
 - **Worktree cleanup**: Configurable delete behavior on ticket deletion
-- **Agent priority**: opencode > claude > aider (first available becomes default)
+- **Agent priority**: opencode > claude > gemini > codex > aider (first available becomes default)
