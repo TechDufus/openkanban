@@ -200,14 +200,26 @@ Override specific colors while using a base theme:
   "ui": {
     "theme": "catppuccin-mocha",
     "custom_colors": {
-      "blue": "#7aa2f7",
-      "green": "#9ece6a"
+      "primary": "#7aa2f7",
+      "success": "#9ece6a"
     }
   }
 }
 ```
 
-Available color fields: `base`, `surface`, `overlay`, `text`, `subtext`, `muted`, `blue`, `green`, `yellow`, `red`, `mauve`, `teal`.
+Available color fields:
+
+**Backgrounds:** `base`, `surface`, `overlay`
+
+**Text:** `text`, `subtext`, `muted`
+
+**Semantic accents:**
+- `primary` - Main accent (focus, selection, backlog column)
+- `secondary` - Secondary accent (special highlights)
+- `success` - Positive states (done column, confirmations)
+- `warning` - Caution states (in-progress column)
+- `error` - Errors and destructive actions
+- `info` - Informational elements
 
 ## OpenCode Integration
 
@@ -235,6 +247,7 @@ Press `O` to open the settings menu. You can configure these options without edi
 
 | Setting | Description |
 |---------|-------------|
+| Theme | Color theme (use j/k to navigate, live preview) |
 | Default Agent | Which agent to spawn (opencode, claude, gemini, codex, aider) |
 | Confirm Quit | Prompt before quitting with running agents |
 | Branch Prefix | Prefix for auto-generated branch names |

@@ -141,6 +141,7 @@ type Model struct {
 	settingsIndex   int
 	settingsEditing bool
 	settingsInput   textinput.Model
+	themeListIndex  int
 
 	filterInput textinput.Model
 	filterQuery string
@@ -1664,6 +1665,10 @@ func (m *Model) handleSettingsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 
+	if field.kind == "theme" {
+		return m.handleThemeNav(msg)
+	}
+
 	switch msg.String() {
 	case "enter":
 		m.applySettingsValue(field.key, m.settingsInput.Value())
@@ -1680,6 +1685,35 @@ func (m *Model) handleSettingsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.settingsInput, cmd = m.settingsInput.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) handleThemeNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	themes := config.ThemeNames()
+	if len(themes) == 0 {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "j", "down":
+		m.themeListIndex++
+		if m.themeListIndex >= len(themes) {
+			m.themeListIndex = 0
+		}
+		m.applySettingsValue("theme", themes[m.themeListIndex])
+	case "k", "up":
+		m.themeListIndex--
+		if m.themeListIndex < 0 {
+			m.themeListIndex = len(themes) - 1
+		}
+		m.applySettingsValue("theme", themes[m.themeListIndex])
+	case "enter":
+		m.settingsEditing = false
+		m.notify("Theme: " + themes[m.themeListIndex])
+	case "esc":
+		m.settingsEditing = false
+	}
+
+	return m, nil
 }
 
 func (m *Model) handleSettingsMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -1743,17 +1777,14 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 	case "theme":
 		themes := config.ThemeNames()
 		current := m.config.UI.Theme
-		currentIndex := 0
+		m.themeListIndex = 0
 		for i, t := range themes {
 			if t == current {
-				currentIndex = i
+				m.themeListIndex = i
 				break
 			}
 		}
-		nextIndex := (currentIndex + 1) % len(themes)
-		nextTheme := themes[nextIndex]
-		m.applySettingsValue(field.key, nextTheme)
-		m.notify("Theme: " + nextTheme)
+		m.settingsEditing = true
 		return m, nil
 
 	case "agent":

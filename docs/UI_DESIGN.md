@@ -271,235 +271,151 @@ Selected:                    Error state:                  High priority:
                     └────────────────────────────────────┘
 ```
 
-## Color Scheme (Catppuccin Mocha)
+## Color Scheme (Themeable)
 
-### Base Colors
+OpenKanban uses semantic color names that map to different hues per theme. This allows themes to use their own color palettes while maintaining consistent meaning.
+
+### Theme Color Structure
 
 ```go
-var colors = struct {
-    // Base
-    Base     lipgloss.Color // #1e1e2e - Main background
-    Mantle   lipgloss.Color // #181825 - Darker background
-    Crust    lipgloss.Color // #11111b - Darkest background
-    Surface0 lipgloss.Color // #313244 - Surface
-    Surface1 lipgloss.Color // #45475a - Lighter surface
-    Surface2 lipgloss.Color // #585b70 - Even lighter
-    
+type ThemeColors struct {
+    // Backgrounds
+    Base    string // Main background
+    Surface string // Elevated surfaces (cards, panels)
+    Overlay string // Highest elevation (modals, dropdowns)
+
     // Text
-    Text     lipgloss.Color // #cdd6f4 - Main text
-    Subtext0 lipgloss.Color // #a6adc8 - Dimmed text
-    Subtext1 lipgloss.Color // #bac2de - Less dimmed
-    Overlay0 lipgloss.Color // #6c7086 - Muted text
-    
-    // Accent colors
-    Blue     lipgloss.Color // #89b4fa - Primary accent
-    Green    lipgloss.Color // #a6e3a1 - Success
-    Yellow   lipgloss.Color // #f9e2af - Warning/Working
-    Red      lipgloss.Color // #f38ba8 - Error
-    Mauve    lipgloss.Color // #cba6f7 - Purple accent
-    Peach    lipgloss.Color // #fab387 - Orange accent
-    Teal     lipgloss.Color // #94e2d5 - Teal accent
-    Pink     lipgloss.Color // #f5c2e7 - Pink accent
-}{
-    Base:     lipgloss.Color("#1e1e2e"),
-    Mantle:   lipgloss.Color("#181825"),
-    Crust:    lipgloss.Color("#11111b"),
-    Surface0: lipgloss.Color("#313244"),
-    Surface1: lipgloss.Color("#45475a"),
-    Surface2: lipgloss.Color("#585b70"),
-    Text:     lipgloss.Color("#cdd6f4"),
-    Subtext0: lipgloss.Color("#a6adc8"),
-    Subtext1: lipgloss.Color("#bac2de"),
-    Overlay0: lipgloss.Color("#6c7086"),
-    Blue:     lipgloss.Color("#89b4fa"),
-    Green:    lipgloss.Color("#a6e3a1"),
-    Yellow:   lipgloss.Color("#f9e2af"),
-    Red:      lipgloss.Color("#f38ba8"),
-    Mauve:    lipgloss.Color("#cba6f7"),
-    Peach:    lipgloss.Color("#fab387"),
-    Teal:     lipgloss.Color("#94e2d5"),
-    Pink:     lipgloss.Color("#f5c2e7"),
+    Text    string // Primary text
+    Subtext string // Secondary text
+    Muted   string // Disabled/placeholder text
+
+    // Semantic accents
+    Primary   string // Main accent (focus, selection, backlog column)
+    Secondary string // Secondary accent (special highlights)
+    Success   string // Positive states (done column, confirmations)
+    Warning   string // Caution states (in-progress column)
+    Error     string // Errors, destructive actions
+    Info      string // Informational elements
 }
 ```
 
-### Semantic Color Mapping
+### Semantic Color Usage
+
+| Purpose | Color | Usage |
+|---------|-------|-------|
+| Backlog column | `Primary` | Column header, selected ticket border |
+| In Progress column | `Warning` | Column header, working agent indicator |
+| Done column | `Success` | Column header, completed status |
+| Agent idle | `Primary` | Idle session indicator |
+| Agent working | `Warning` | Active processing (animated) |
+| Agent waiting | `Secondary` | Awaiting user input |
+| Agent error | `Error` | Crashed/failed state |
+| High priority | `Error` | Critical/urgent tickets |
+| Links/info | `Info` | Informational elements |
+
+### Example: Catppuccin Mocha
 
 ```go
-var semantic = struct {
-    // Column headers
-    ColumnBacklog    lipgloss.Color // Blue
-    ColumnInProgress lipgloss.Color // Yellow
-    ColumnDone       lipgloss.Color // Green
-    
-    // Agent status
-    AgentIdle      lipgloss.Color // Blue
-    AgentWorking   lipgloss.Color // Yellow
-    AgentWaiting   lipgloss.Color // Mauve
-    AgentCompleted lipgloss.Color // Green
-    AgentError     lipgloss.Color // Red
-    
-    // Priority
-    PriorityHigh   lipgloss.Color // Red
-    PriorityMedium lipgloss.Color // Yellow
-    PriorityLow    lipgloss.Color // Text (default)
-    
-    // UI elements
-    Selected lipgloss.Color // Blue
-    Border   lipgloss.Color // Surface1
-    Dimmed   lipgloss.Color // Overlay0
-}{
-    ColumnBacklog:    colors.Blue,
-    ColumnInProgress: colors.Yellow,
-    ColumnDone:       colors.Green,
-    
-    AgentIdle:      colors.Blue,
-    AgentWorking:   colors.Yellow,
-    AgentWaiting:   colors.Mauve,
-    AgentCompleted: colors.Green,
-    AgentError:     colors.Red,
-    
-    PriorityHigh:   colors.Red,
-    PriorityMedium: colors.Yellow,
-    PriorityLow:    colors.Text,
-    
-    Selected: colors.Blue,
-    Border:   colors.Surface1,
-    Dimmed:   colors.Overlay0,
+ThemeColors{
+    Base:      "#1e1e2e",
+    Surface:   "#313244",
+    Overlay:   "#45475a",
+    Text:      "#cdd6f4",
+    Subtext:   "#bac2de",
+    Muted:     "#6c7086",
+    Primary:   "#89b4fa",  // Blue - backlog, selection
+    Secondary: "#cba6f7",  // Mauve - special accents
+    Success:   "#a6e3a1",  // Green - done, success
+    Warning:   "#f9e2af",  // Yellow - in-progress
+    Error:     "#f38ba8",  // Red - errors
+    Info:      "#94e2d5",  // Teal - informational
+}
+```
+
+### Example: Gruvbox Dark (Different Hues, Same Semantics)
+
+```go
+ThemeColors{
+    Base:      "#282828",
+    Surface:   "#3c3836",
+    Overlay:   "#504945",
+    Text:      "#ebdbb2",
+    Subtext:   "#d5c4a1",
+    Muted:     "#928374",
+    Primary:   "#83a598",  // Aqua - backlog, selection
+    Secondary: "#d3869b",  // Purple - special accents
+    Success:   "#b8bb26",  // Green - done, success
+    Warning:   "#fabd2f",  // Yellow - in-progress
+    Error:     "#fb4934",  // Red - errors
+    Info:      "#8ec07c",  // Green - informational
 }
 ```
 
 ## Lipgloss Style Definitions
 
+Colors are accessed via `m.colors` which is derived from the active theme:
+
 ```go
-package styles
+// Column colors are derived from status
+func (m *Model) columnColor(status board.TicketStatus) lipgloss.Color {
+    switch status {
+    case board.StatusBacklog:
+        return m.colors.primary
+    case board.StatusInProgress:
+        return m.colors.warning
+    case board.StatusDone:
+        return m.colors.success
+    default:
+        return m.colors.muted
+    }
+}
 
-import "github.com/charmbracelet/lipgloss"
+// Agent status colors
+func (m *Model) agentColor(status board.AgentStatus) lipgloss.Color {
+    switch status {
+    case board.AgentIdle:
+        return m.colors.primary
+    case board.AgentWorking:
+        return m.colors.warning
+    case board.AgentWaiting:
+        return m.colors.secondary
+    case board.AgentCompleted:
+        return m.colors.success
+    case board.AgentError:
+        return m.colors.err
+    default:
+        return m.colors.muted
+    }
+}
+```
 
-// Layout styles
-var (
-    App = lipgloss.NewStyle().
-        Background(colors.Base)
-    
-    Header = lipgloss.NewStyle().
-        Foreground(colors.Text).
-        Background(colors.Mantle).
-        Padding(0, 1).
-        Bold(true)
-    
-    StatusBar = lipgloss.NewStyle().
-        Foreground(colors.Subtext0).
-        Background(colors.Mantle).
-        Padding(0, 1)
-)
+### Style Examples
 
-// Column styles
-var (
-    Column = lipgloss.NewStyle().
-        Border(lipgloss.RoundedBorder()).
-        BorderForeground(colors.Surface1).
-        Padding(0, 1).
-        MarginRight(1)
-    
-    ColumnHeader = lipgloss.NewStyle().
-        Bold(true).
-        Padding(0, 1).
-        MarginBottom(1)
-    
-    ColumnHeaderBacklog = ColumnHeader.Copy().
-        Foreground(colors.Blue)
-    
-    ColumnHeaderInProgress = ColumnHeader.Copy().
-        Foreground(colors.Yellow)
-    
-    ColumnHeaderDone = ColumnHeader.Copy().
-        Foreground(colors.Green)
-)
+```go
+// Column header uses semantic column color
+headerStyle := lipgloss.NewStyle().
+    Foreground(m.columnColor(col.Status)).
+    Bold(true)
 
-// Ticket card styles
-var (
-    TicketCard = lipgloss.NewStyle().
-        Border(lipgloss.RoundedBorder()).
-        BorderForeground(colors.Surface0).
-        Padding(0, 1).
-        MarginBottom(1).
-        Width(36)
-    
-    TicketCardSelected = TicketCard.Copy().
-        Border(lipgloss.DoubleBorder()).
-        BorderForeground(colors.Blue)
-    
-    TicketTitle = lipgloss.NewStyle().
-        Foreground(colors.Text).
-        Bold(true)
-    
-    TicketID = lipgloss.NewStyle().
-        Foreground(colors.Subtext0)
-    
-    TicketLabel = lipgloss.NewStyle().
-        Foreground(colors.Mantle).
-        Background(colors.Surface2).
-        Padding(0, 1)
-)
+// Selected ticket border matches column color
+ticketBorder := lipgloss.NewStyle().
+    Border(lipgloss.DoubleBorder()).
+    BorderForeground(m.columnColor(col.Status))
 
-// Agent status styles
-var (
-    AgentIndicator = lipgloss.NewStyle().
-        MarginRight(1)
-    
-    AgentIdle = AgentIndicator.Copy().
-        Foreground(colors.Blue)
-    
-    AgentWorking = AgentIndicator.Copy().
-        Foreground(colors.Yellow).
-        Blink(true)  // If terminal supports
-    
-    AgentWaiting = AgentIndicator.Copy().
-        Foreground(colors.Mauve)
-    
-    AgentCompleted = AgentIndicator.Copy().
-        Foreground(colors.Green)
-    
-    AgentError = AgentIndicator.Copy().
-        Foreground(colors.Red)
-)
+// Modal uses primary accent
+modalStyle := lipgloss.NewStyle().
+    Border(lipgloss.RoundedBorder()).
+    BorderForeground(m.colors.primary).
+    Background(m.colors.surface)
 
-// Modal styles
-var (
-    Modal = lipgloss.NewStyle().
-        Border(lipgloss.RoundedBorder()).
-        BorderForeground(colors.Blue).
-        Background(colors.Mantle).
-        Padding(1, 2)
-    
-    ModalTitle = lipgloss.NewStyle().
-        Foreground(colors.Blue).
-        Bold(true).
-        MarginBottom(1)
-    
-    ModalButton = lipgloss.NewStyle().
-        Foreground(colors.Text).
-        Background(colors.Surface0).
-        Padding(0, 2)
-    
-    ModalButtonFocused = ModalButton.Copy().
-        Background(colors.Blue).
-        Foreground(colors.Mantle)
-)
+// Error states use error color
+errorStyle := lipgloss.NewStyle().
+    Foreground(m.colors.err).
+    Bold(true)
 
-// Input styles
-var (
-    Input = lipgloss.NewStyle().
-        Border(lipgloss.RoundedBorder()).
-        BorderForeground(colors.Surface1).
-        Padding(0, 1)
-    
-    InputFocused = Input.Copy().
-        BorderForeground(colors.Blue)
-    
-    InputLabel = lipgloss.NewStyle().
-        Foreground(colors.Subtext0).
-        MarginBottom(1)
-)
+// Success states use success color
+successStyle := lipgloss.NewStyle().
+    Foreground(m.colors.success)
 ```
 
 ## Responsive Behavior
