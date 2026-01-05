@@ -109,6 +109,9 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConfigDir(t *testing.T) {
+	t.Setenv("OPENKANBAN_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
 	dir, err := ConfigDir()
 	if err != nil {
 		t.Fatalf("ConfigDir() error: %v", err)
@@ -124,6 +127,35 @@ func TestConfigDir(t *testing.T) {
 
 	if filepath.Base(filepath.Dir(dir)) != ".config" {
 		t.Errorf("ConfigDir() = %q; want parent to be '.config'", dir)
+	}
+}
+
+func TestConfigDir_EnvOverride(t *testing.T) {
+	t.Setenv("OPENKANBAN_CONFIG_DIR", "/custom/test/path")
+	t.Setenv("XDG_CONFIG_HOME", "/should/be/ignored")
+
+	dir, err := ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir() error: %v", err)
+	}
+
+	if dir != "/custom/test/path" {
+		t.Errorf("ConfigDir() = %q; want %q", dir, "/custom/test/path")
+	}
+}
+
+func TestConfigDir_XDGFallback(t *testing.T) {
+	t.Setenv("OPENKANBAN_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg/config")
+
+	dir, err := ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir() error: %v", err)
+	}
+
+	expected := filepath.Join("/xdg/config", "openkanban")
+	if dir != expected {
+		t.Errorf("ConfigDir() = %q; want %q", dir, expected)
 	}
 }
 

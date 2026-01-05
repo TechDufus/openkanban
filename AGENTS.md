@@ -17,7 +17,8 @@ openkanban/
 │   ├── git/           # Worktree management
 │   ├── config/        # Config loading/validation
 │   ├── board/         # Ticket/Column types
-│   └── app/           # App orchestration
+│   ├── app/           # App orchestration
+│   └── testutil/      # Test helpers (TestEnv, assertions)
 ├── docs/              # Design docs
 └── main.go            # Entry point
 ```
@@ -47,6 +48,7 @@ openkanban/
 | `StatusDetector` | struct | agent/status.go | Agent status polling |
 | `WorktreeManager` | struct | git/worktree.go:13 | Git worktree CRUD |
 | `Config` | struct | config/config.go:106 | Global config with agents map |
+| `TestEnv` | struct | testutil/testutil.go:14 | Isolated test environment helper |
 
 ## Conventions
 
@@ -73,13 +75,96 @@ openkanban/
 ## Commands
 
 ```bash
-go build ./...                      # Build
-go test ./...                       # All tests
-go test ./internal/config/...       # Single package
+make build                          # Build binary
+make test                           # Unit tests (default)
+make test-unit                      # Unit tests only
+make test-integration               # Integration tests only
+make test-all                       # All tests
+make coverage                       # Coverage report
+make lint                           # Run linters
 go test -run TestName ./...         # Single test
-go vet ./...                        # Lint
 goreleaser release --snapshot       # Local release build
 ```
+
+## Testing
+
+### Test Isolation
+
+Config directory is overridable via environment variable:
+
+```bash
+OPENKANBAN_CONFIG_DIR=/tmp/test openkanban    # Use custom config dir
+```
+
+Priority: `OPENKANBAN_CONFIG_DIR` > `XDG_CONFIG_HOME/openkanban` > `~/.config/openkanban`
+
+### Test Types
+
+| Type | Location | Build Tag | When to Use |
+|------|----------|-----------|-------------|
+| Unit | `*_test.go` | none | Pure logic, no I/O |
+| Integration | `*_test.go` | `integration` | State persistence, multi-component |
+
+### Writing Integration Tests
+
+Use `testutil.TestEnv` for isolated test environments:
+
+```go
+//go:build integration
+
+package mypackage_test
+
+import (
+    "testing"
+    "github.com/techdufus/openkanban/internal/testutil"
+)
+
+func TestSomething_Integration(t *testing.T) {
+    env := testutil.NewTestEnv(t)  // Creates temp dirs, sets OPENKANBAN_CONFIG_DIR
+    env.InitGitRepo()               // Optional: init git in temp repo
+
+    // Setup
+    p := env.CreateProject("test-project")
+
+    // Action
+    // ... your test logic ...
+
+    // Verify
+    env.AssertProjectCount(1)
+    env.AssertTicketCount(0)
+}
+```
+
+### TestEnv API
+
+| Method | Purpose |
+|--------|---------|
+| `NewTestEnv(t)` | Create isolated env, auto-cleanup |
+| `InitGitRepo()` | Initialize git repo in temp dir |
+| `CreateProject(name)` | Create and register project |
+| `LoadRegistry()` | Load project registry |
+| `LoadTickets()` | Load ticket store |
+| `AssertProjectCount(n)` | Verify project count |
+| `AssertTicketCount(n)` | Verify ticket count |
+| `AssertTicketExists(title)` | Find ticket by title |
+| `AssertTicketStatus(id, status)` | Verify ticket status |
+
+### Test Requirements for Changes
+
+**When modifying these areas, ADD or UPDATE tests:**
+
+| Change Area | Required Tests |
+|-------------|----------------|
+| Config loading/validation | Unit test in `config_test.go` |
+| Project CRUD | Integration test using `TestEnv` |
+| Ticket CRUD | Integration test using `TestEnv` |
+| Status transitions | Integration test verifying persistence |
+| New CLI commands | Smoke test + integration test |
+
+**All PRs must pass:**
+- `make test-unit`
+- `make test-integration`
+- `make lint`
 
 ## Data Locations
 

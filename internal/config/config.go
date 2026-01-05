@@ -298,8 +298,20 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ConfigDir returns the configuration directory path
+// ConfigDir returns the configuration directory path.
+// Priority: OPENKANBAN_CONFIG_DIR > XDG_CONFIG_HOME/openkanban > ~/.config/openkanban
 func ConfigDir() (string, error) {
+	// Explicit override (testing, CI, multiple instances)
+	if dir := os.Getenv("OPENKANBAN_CONFIG_DIR"); dir != "" {
+		return dir, nil
+	}
+
+	// XDG standard
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "openkanban"), nil
+	}
+
+	// Default fallback
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
