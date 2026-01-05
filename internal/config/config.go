@@ -198,12 +198,13 @@ type AgentConfig struct {
 
 // UIConfig holds UI-related preferences
 type UIConfig struct {
-	Theme           string `json:"theme"`
-	ShowAgentStatus bool   `json:"show_agent_status"`
-	RefreshInterval int    `json:"refresh_interval"`
-	ColumnWidth     int    `json:"column_width"`
-	TicketHeight    int    `json:"ticket_height"`
-	SidebarVisible  bool   `json:"sidebar_visible"`
+	Theme           string       `json:"theme"`
+	CustomColors    *ThemeColors `json:"custom_colors,omitempty"`
+	ShowAgentStatus bool         `json:"show_agent_status"`
+	RefreshInterval int          `json:"refresh_interval"`
+	ColumnWidth     int          `json:"column_width"`
+	TicketHeight    int          `json:"ticket_height"`
+	SidebarVisible  bool         `json:"sidebar_visible"`
 }
 
 // CleanupSettings controls cleanup behavior when deleting tickets
@@ -380,6 +381,10 @@ func (c *Config) GetEffectiveInitPrompt(agentType string) string {
 		return c.Defaults.InitPrompt
 	}
 	return defaultGlobalPrompt
+}
+
+func (c *Config) GetTheme() Theme {
+	return GetTheme(c.UI.Theme, c.UI.CustomColors)
 }
 
 // Save writes configuration to file

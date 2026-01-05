@@ -62,6 +62,8 @@ const (
 
 type Model struct {
 	config *config.Config
+	theme  config.Theme
+	colors uiColors
 
 	globalStore      *project.GlobalTicketStore
 	projectRegistry  *project.ProjectRegistry
@@ -217,8 +219,11 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, projec
 		}
 	}
 
+	theme := cfg.GetTheme()
 	m := &Model{
 		config:             cfg,
+		theme:              theme,
+		colors:             newUIColors(theme),
 		globalStore:        globalStore,
 		projectRegistry:    projectRegistry,
 		columns:            board.DefaultColumns(),
@@ -1616,6 +1621,7 @@ type settingsField struct {
 }
 
 var settingsFields = []settingsField{
+	{"theme", "Theme", "theme", "Color theme for the UI"},
 	{"default_agent", "Default Agent", "agent", "Agent to spawn for new tickets (opencode, claude, aider)"},
 	{"confirm_quit", "Confirm Quit", "toggle", "Prompt before quitting with running agents"},
 	{"branch_prefix", "Branch Prefix", "text", "Prefix for auto-generated branch names (e.g. task/, feature/)"},
@@ -1734,6 +1740,22 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 		m.notify(field.label + ": " + status)
 		return m, nil
 
+	case "theme":
+		themes := config.ThemeNames()
+		current := m.config.UI.Theme
+		currentIndex := 0
+		for i, t := range themes {
+			if t == current {
+				currentIndex = i
+				break
+			}
+		}
+		nextIndex := (currentIndex + 1) % len(themes)
+		nextTheme := themes[nextIndex]
+		m.applySettingsValue(field.key, nextTheme)
+		m.notify("Theme: " + nextTheme)
+		return m, nil
+
 	case "agent":
 		agents := m.getAgentNames()
 		current := m.config.Defaults.DefaultAgent
@@ -1766,6 +1788,8 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 
 func (m *Model) getSettingsValue(key string) string {
 	switch key {
+	case "theme":
+		return m.config.UI.Theme
 	case "default_agent":
 		return m.config.Defaults.DefaultAgent
 	case "confirm_quit":
@@ -1807,6 +1831,11 @@ func (m *Model) getSettingsValue(key string) string {
 
 func (m *Model) applySettingsValue(key, value string) {
 	switch key {
+	case "theme":
+		m.config.UI.Theme = value
+		m.theme = m.config.GetTheme()
+		m.colors = newUIColors(m.theme)
+		m.config.Save("")
 	case "default_agent":
 		m.config.Defaults.DefaultAgent = value
 		m.config.Save("")

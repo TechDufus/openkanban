@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/techdufus/openkanban/internal/board"
+	"github.com/techdufus/openkanban/internal/config"
 )
 
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		loadingStyle := lipgloss.NewStyle().
-			Foreground(colorBlue).
+			Foreground(m.colors.blue).
 			Bold(true)
 		return lipgloss.Place(
 			80, 24,
@@ -72,7 +74,7 @@ func (m *Model) View() string {
 
 func (m *Model) renderHeader() string {
 	logo := lipgloss.NewStyle().
-		Foreground(colorBlue).
+		Foreground(m.colors.blue).
 		Bold(true).
 		Render("◈ OpenKanban")
 
@@ -90,9 +92,9 @@ func (m *Model) renderHeader() string {
 	visibleCount := m.countVisibleTickets()
 	var stats string
 	if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
-		stats = dimStyle.Render(fmt.Sprintf("showing %d of %d", visibleCount, ticketCount))
+		stats = m.dimStyle().Render(fmt.Sprintf("showing %d of %d", visibleCount, ticketCount))
 	} else {
-		stats = dimStyle.Render(fmt.Sprintf("%d projects, %d tickets", projectCount, ticketCount))
+		stats = m.dimStyle().Render(fmt.Sprintf("%d projects, %d tickets", projectCount, ticketCount))
 	}
 
 	left := lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", filterSection, "  ", stats)
@@ -124,21 +126,21 @@ func (m *Model) renderHeader() string {
 		var bgColor lipgloss.Color
 
 		if waitingCount > 0 {
-			bgColor = colorMauve
+			bgColor = m.colors.mauve
 			statusText = fmt.Sprintf("◐ %d waiting", waitingCount)
 			if workingCount > 0 {
 				statusText = fmt.Sprintf("◐ %d waiting, %d working", waitingCount, workingCount)
 			}
 		} else if workingCount > 0 {
-			bgColor = colorYellow
+			bgColor = m.colors.yellow
 			statusText = fmt.Sprintf("%s %d working", m.spinner.View(), workingCount)
 		} else {
-			bgColor = colorBlue
+			bgColor = m.colors.blue
 			statusText = fmt.Sprintf("◆ %d idle", idleCount)
 		}
 
 		activityBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
+			Foreground(m.colors.base).
 			Background(bgColor).
 			Bold(true).
 			Padding(0, 1).
@@ -146,7 +148,7 @@ func (m *Model) renderHeader() string {
 		activity = activityBadge
 	}
 
-	helpStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	helpStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 	help := helpStyle.Render("? help  q quit")
 
 	right := help
@@ -164,7 +166,7 @@ func (m *Model) renderHeader() string {
 		PaddingBottom(1).
 		BorderBottom(true).
 		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(colorSurface).
+		BorderForeground(m.colors.surface).
 		Width(m.width).
 		Render(header)
 }
@@ -183,8 +185,8 @@ func (m *Model) renderBoard() string {
 
 	if startCol > 0 {
 		indicator := lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Background(colorSurface).
+			Foreground(m.colors.muted).
+			Background(m.colors.surface).
 			Padding(0, 1).
 			Render(fmt.Sprintf("◀ %d", startCol))
 		columns = append(columns, indicator)
@@ -213,8 +215,8 @@ func (m *Model) renderBoard() string {
 	if endCol < len(m.columns) {
 		remaining := len(m.columns) - endCol
 		indicator := lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Background(colorSurface).
+			Foreground(m.colors.muted).
+			Background(m.colors.surface).
 			Padding(0, 1).
 			Render(fmt.Sprintf("%d ▶", remaining))
 		columns = append(columns, indicator)
@@ -241,14 +243,14 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 
 	headerText := fmt.Sprintf("%s %s", icon, col.Name)
 
-	countStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	countStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 	countText := fmt.Sprintf("(%d)", len(tickets))
 	if col.Limit > 0 {
 		countText = fmt.Sprintf("(%d/%d)", len(tickets), col.Limit)
 		if len(tickets) >= col.Limit {
 			countStyle = lipgloss.NewStyle().
-				Foreground(colorBase).
-				Background(colorRed).
+				Foreground(m.colors.base).
+				Background(m.colors.red).
 				Padding(0, 1)
 		}
 	}
@@ -269,7 +271,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	hasMoreBelow := endIdx < len(tickets)
 
 	indicatorStyle := lipgloss.NewStyle().
-		Foreground(colorMuted).
+		Foreground(m.colors.muted).
 		Width(width - 4).
 		Align(lipgloss.Center)
 
@@ -303,7 +305,7 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 			emptyText = "Finished tickets land here"
 		}
 		emptyStyle := lipgloss.NewStyle().
-			Foreground(colorMuted).
+			Foreground(m.colors.muted).
 			Italic(true).
 			Padding(2, 0).
 			Width(width - 4).
@@ -314,15 +316,15 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	content := lipgloss.JoinVertical(lipgloss.Left, headerLine, "", ticketsView)
 
 	border := columnBorder
-	borderColor := colorSurface
+	borderColor := m.colors.surface
 	if isDragTarget {
 		border = dragTargetBorder
-		borderColor = colorGreen
+		borderColor = m.colors.green
 	} else if isActive {
 		border = columnBorderActive
 		borderColor = headerColor
 	} else if isHovered {
-		borderColor = colorOverlay
+		borderColor = m.colors.overlay
 	}
 
 	style := lipgloss.NewStyle().
@@ -350,8 +352,8 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 		if len(shortName) > 12 {
 			shortName = shortName[:10] + ".."
 		}
-		bracketStyle := lipgloss.NewStyle().Foreground(colorTeal)
-		textStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+		bracketStyle := lipgloss.NewStyle().Foreground(m.colors.teal)
+		textStyle := lipgloss.NewStyle().Foreground(m.colors.teal).Bold(true)
 		projectBadge = bracketStyle.Render("❨") + textStyle.Render(shortName) + bracketStyle.Render("❩")
 	}
 
@@ -359,28 +361,28 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	switch effectiveStatus {
 	case board.AgentWaiting:
 		sessionBadge = lipgloss.NewStyle().
-			Foreground(colorMauve).
+			Foreground(m.colors.mauve).
 			Render("◐")
 	case board.AgentIdle:
 		if hasPane {
 			sessionBadge = lipgloss.NewStyle().
-				Foreground(colorBlue).
+				Foreground(m.colors.blue).
 				Render("◆")
 		}
 	case board.AgentCompleted:
 		sessionBadge = lipgloss.NewStyle().
-			Foreground(colorGreen).
+			Foreground(m.colors.green).
 			Render("✓")
 	case board.AgentError:
 		sessionBadge = lipgloss.NewStyle().
-			Foreground(colorRed).
+			Foreground(m.colors.red).
 			Render("✗")
 	}
 
 	var priorityBadge string
 	if ticket.Priority > 0 && ticket.Priority <= 2 {
 		priorityColors := map[int]lipgloss.Color{
-			1: colorRed,
+			1: m.colors.red,
 			2: lipgloss.Color("#fab387"),
 		}
 		priorityLabels := map[int]string{
@@ -395,7 +397,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	blockedByCount := len(m.globalStore.GetBlockedBy(ticket.ID))
 	blocksCount := len(m.globalStore.GetBlocks(ticket.ID))
 	if blockedByCount > 0 || blocksCount > 0 {
-		depStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		depStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 		if blockedByCount > 0 && blocksCount > 0 {
 			depBadge = depStyle.Render(fmt.Sprintf("⛓%d↑%d↓", blockedByCount, blocksCount))
 		} else if blockedByCount > 0 {
@@ -421,7 +423,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	headerLine := strings.Join(headerParts, "  ")
 
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorText).
+		Foreground(m.colors.text).
 		Bold(isSelected).
 		Width(width)
 	wrappedTitle := titleStyle.Render(ticket.Title)
@@ -434,7 +436,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 		}
 		desc = strings.ReplaceAll(desc, "\n", " ")
 		descLine = lipgloss.NewStyle().
-			Foreground(colorMuted).
+			Foreground(m.colors.muted).
 			Italic(true).
 			Width(width).
 			Render(desc)
@@ -443,8 +445,8 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	var statusParts []string
 	if ticket.AgentType != "" {
 		agentBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorBlue).
+			Foreground(m.colors.base).
+			Background(m.colors.blue).
 			Padding(0, 1).
 			Render(ticket.AgentType)
 		statusParts = append(statusParts, agentBadge)
@@ -457,23 +459,23 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 		case board.AgentIdle:
 			statusIcon = "◆"
 			statusText = "idle"
-			statusColor = colorBlue
+			statusColor = m.colors.blue
 		case board.AgentWorking:
 			statusIcon = m.spinner.View()
 			statusText = "working"
-			statusColor = colorYellow
+			statusColor = m.colors.yellow
 		case board.AgentWaiting:
 			statusIcon = "◐"
 			statusText = "waiting"
-			statusColor = colorMauve
+			statusColor = m.colors.mauve
 		case board.AgentCompleted:
 			statusIcon = "✓"
 			statusText = "done"
-			statusColor = colorGreen
+			statusColor = m.colors.green
 		case board.AgentError:
 			statusIcon = "✗"
 			statusText = "error"
-			statusColor = colorRed
+			statusColor = m.colors.red
 		}
 		statusStyle := lipgloss.NewStyle().Foreground(statusColor)
 		statusParts = append(statusParts, statusStyle.Render(statusIcon+" "+statusText))
@@ -484,8 +486,8 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	var labelParts []string
 	for _, label := range ticket.Labels {
 		lbl := lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Background(colorOverlay).
+			Foreground(m.colors.subtext).
+			Background(m.colors.overlay).
 			Padding(0, 1).
 			Render(label)
 		labelParts = append(labelParts, lbl)
@@ -505,30 +507,30 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 
 	content := strings.Join(lines, "\n")
 
-	var accentColor lipgloss.Color = colorSurface
+	var accentColor lipgloss.Color = m.colors.surface
 	switch effectiveStatus {
 	case board.AgentWorking:
-		accentColor = colorYellow
+		accentColor = m.colors.yellow
 	case board.AgentWaiting:
-		accentColor = colorMauve
+		accentColor = m.colors.mauve
 	case board.AgentIdle:
 		if hasPane {
-			accentColor = colorBlue
+			accentColor = m.colors.blue
 		}
 	case board.AgentCompleted:
-		accentColor = colorGreen
+		accentColor = m.colors.green
 	case board.AgentError:
-		accentColor = colorRed
+		accentColor = m.colors.red
 	}
 	if isRunning {
-		accentColor = colorGreen
+		accentColor = m.colors.green
 	}
 
 	border := ticketBorder
-	borderColor := colorSurface
+	borderColor := m.colors.surface
 
 	if isHovered && !isSelected {
-		borderColor = colorOverlay
+		borderColor = m.colors.overlay
 	}
 
 	if isSelected {
@@ -537,7 +539,7 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 	}
 
 	if isRunning {
-		borderColor = colorGreen
+		borderColor = m.colors.green
 	}
 
 	cardStyle := lipgloss.NewStyle().
@@ -557,31 +559,31 @@ func (m *Model) renderStatusBar() string {
 		bg   lipgloss.Color
 	}
 	modeConfigs := map[Mode]modeConfig{
-		ModeNormal:        {"◆", colorBlue},
-		ModeInsert:        {"✎", colorGreen},
-		ModeCommand:       {":", colorMauve},
-		ModeCreateTicket:  {"+", colorGreen},
-		ModeEditTicket:    {"✎", colorYellow},
-		ModeAgentView:     {"▶", colorTeal},
-		ModeSettings:      {"⚙", colorMauve},
-		ModeHelp:          {"?", colorBlue},
-		ModeConfirm:       {"!", colorRed},
-		ModeFilter:        {"/", colorTeal},
-		ModeCreateProject: {"📁", colorGreen},
+		ModeNormal:        {"◆", m.colors.blue},
+		ModeInsert:        {"✎", m.colors.green},
+		ModeCommand:       {":", m.colors.mauve},
+		ModeCreateTicket:  {"+", m.colors.green},
+		ModeEditTicket:    {"✎", m.colors.yellow},
+		ModeAgentView:     {"▶", m.colors.teal},
+		ModeSettings:      {"⚙", m.colors.mauve},
+		ModeHelp:          {"?", m.colors.blue},
+		ModeConfirm:       {"!", m.colors.red},
+		ModeFilter:        {"/", m.colors.teal},
+		ModeCreateProject: {"📁", m.colors.green},
 	}
 	cfg := modeConfigs[m.mode]
 	if cfg.bg == "" {
-		cfg = modeConfig{"◆", colorBlue}
+		cfg = modeConfig{"◆", m.colors.blue}
 	}
 	modeStr := lipgloss.NewStyle().
-		Foreground(colorBase).
+		Foreground(m.colors.base).
 		Background(cfg.bg).
 		Bold(true).
 		Padding(0, 1).
 		Render(cfg.icon + " " + string(m.mode))
 
-	sep := lipgloss.NewStyle().Foreground(colorOverlay).Render(" │ ")
-	hintStyle := lipgloss.NewStyle().Foreground(colorSubtext)
+	sep := lipgloss.NewStyle().Foreground(m.colors.overlay).Render(" │ ")
+	hintStyle := lipgloss.NewStyle().Foreground(m.colors.subtext)
 
 	hints := m.contextualHints(hintStyle, sep)
 
@@ -590,14 +592,14 @@ func (m *Model) renderStatusBar() string {
 		isError := strings.HasPrefix(m.notification, "Failed") ||
 			strings.HasPrefix(m.notification, "Error") ||
 			strings.Contains(m.notification, "failed")
-		bgColor := colorGreen
+		bgColor := m.colors.green
 		icon := "✓"
 		if isError {
-			bgColor = colorRed
+			bgColor = m.colors.red
 			icon = "✗"
 		}
 		notifBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
+			Foreground(m.colors.base).
 			Background(bgColor).
 			Padding(0, 1).
 			Render(icon + " " + m.notification)
@@ -614,87 +616,87 @@ func (m *Model) renderStatusBar() string {
 func (m *Model) contextualHints(hintStyle lipgloss.Style, sep string) string {
 	switch m.mode {
 	case ModeFilter:
-		return hintStyle.Render("Enter") + dimStyle.Render(" apply") + sep +
-			hintStyle.Render("Esc") + dimStyle.Render(" cancel") + sep +
-			dimStyle.Render("@project to filter by project")
+		return hintStyle.Render("Enter") + m.dimStyle().Render(" apply") + sep +
+			hintStyle.Render("Esc") + m.dimStyle().Render(" cancel") + sep +
+			m.dimStyle().Render("@project to filter by project")
 
 	case ModeSettings:
-		return hintStyle.Render("j/k") + dimStyle.Render(" navigate") + sep +
-			hintStyle.Render("Enter") + dimStyle.Render(" select") + sep +
-			hintStyle.Render("Esc") + dimStyle.Render(" close")
+		return hintStyle.Render("j/k") + m.dimStyle().Render(" navigate") + sep +
+			hintStyle.Render("Enter") + m.dimStyle().Render(" select") + sep +
+			hintStyle.Render("Esc") + m.dimStyle().Render(" close")
 
 	case ModeCreateTicket, ModeEditTicket:
 		action := "create"
 		if m.mode == ModeEditTicket {
 			action = "save"
 		}
-		return hintStyle.Render("Tab") + dimStyle.Render(" next") + sep +
-			hintStyle.Render("Ctrl+S") + dimStyle.Render(" "+action) + sep +
-			hintStyle.Render("Esc") + dimStyle.Render(" cancel")
+		return hintStyle.Render("Tab") + m.dimStyle().Render(" next") + sep +
+			hintStyle.Render("Ctrl+S") + m.dimStyle().Render(" "+action) + sep +
+			hintStyle.Render("Esc") + m.dimStyle().Render(" cancel")
 
 	case ModeAgentView:
-		return hintStyle.Render("Ctrl+G") + dimStyle.Render(" back to board") + sep +
-			dimStyle.Render("Shift+click to select text")
+		return hintStyle.Render("Ctrl+G") + m.dimStyle().Render(" back to board") + sep +
+			m.dimStyle().Render("Shift+click to select text")
 
 	case ModeNormal:
 		if m.sidebarFocused {
-			return hintStyle.Render("j/k") + dimStyle.Render(" navigate") + sep +
-				hintStyle.Render("Space/Enter") + dimStyle.Render(" toggle") + sep +
-				hintStyle.Render("l") + dimStyle.Render(" board")
+			return hintStyle.Render("j/k") + m.dimStyle().Render(" navigate") + sep +
+				hintStyle.Render("Space/Enter") + m.dimStyle().Render(" toggle") + sep +
+				hintStyle.Render("l") + m.dimStyle().Render(" board")
 		}
 
 		if m.filterQuery != "" || len(m.filterProjectIDs) > 0 {
-			return hintStyle.Render("Esc") + dimStyle.Render(" clear filter") + sep +
-				hintStyle.Render("/") + dimStyle.Render(" edit filter") + sep +
-				hintStyle.Render("?") + dimStyle.Render(" help")
+			return hintStyle.Render("Esc") + m.dimStyle().Render(" clear filter") + sep +
+				hintStyle.Render("/") + m.dimStyle().Render(" edit filter") + sep +
+				hintStyle.Render("?") + m.dimStyle().Render(" help")
 		}
 
 		ticket := m.selectedTicket()
 		if ticket != nil {
 			if _, hasPane := m.panes[ticket.ID]; hasPane {
-				return hintStyle.Render("Enter") + dimStyle.Render(" attach") + sep +
-					hintStyle.Render("S") + dimStyle.Render(" stop agent") + sep +
-					hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
-					hintStyle.Render("?") + dimStyle.Render(" help")
+				return hintStyle.Render("Enter") + m.dimStyle().Render(" attach") + sep +
+					hintStyle.Render("S") + m.dimStyle().Render(" stop agent") + sep +
+					hintStyle.Render("Space") + m.dimStyle().Render(" move") + sep +
+					hintStyle.Render("?") + m.dimStyle().Render(" help")
 			}
 			if ticket.Status == board.StatusInProgress {
-				return hintStyle.Render("s") + dimStyle.Render(" spawn agent") + sep +
-					hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
-					hintStyle.Render("e") + dimStyle.Render(" edit") + sep +
-					hintStyle.Render("?") + dimStyle.Render(" help")
+				return hintStyle.Render("s") + m.dimStyle().Render(" spawn agent") + sep +
+					hintStyle.Render("Space") + m.dimStyle().Render(" move") + sep +
+					hintStyle.Render("e") + m.dimStyle().Render(" edit") + sep +
+					hintStyle.Render("?") + m.dimStyle().Render(" help")
 			}
 		}
 
-		return hintStyle.Render("h/l") + dimStyle.Render(" columns") + sep +
-			hintStyle.Render("n") + dimStyle.Render(" new") + sep +
-			hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
-			hintStyle.Render("/") + dimStyle.Render(" search") + sep +
-			hintStyle.Render("?") + dimStyle.Render(" help")
+		return hintStyle.Render("h/l") + m.dimStyle().Render(" columns") + sep +
+			hintStyle.Render("n") + m.dimStyle().Render(" new") + sep +
+			hintStyle.Render("Space") + m.dimStyle().Render(" move") + sep +
+			hintStyle.Render("/") + m.dimStyle().Render(" search") + sep +
+			hintStyle.Render("?") + m.dimStyle().Render(" help")
 
 	default:
-		return hintStyle.Render("Esc") + dimStyle.Render(" back") + sep +
-			hintStyle.Render("?") + dimStyle.Render(" help")
+		return hintStyle.Render("Esc") + m.dimStyle().Render(" back") + sep +
+			hintStyle.Render("?") + m.dimStyle().Render(" help")
 	}
 }
 
 func (m *Model) renderHelp() string {
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorBlue).
+		Foreground(m.colors.blue).
 		Bold(true)
 
 	sectionStyle := lipgloss.NewStyle().
-		Foreground(colorMauve).
+		Foreground(m.colors.mauve).
 		Bold(true)
 
 	keyStyle := lipgloss.NewStyle().
-		Foreground(colorTeal).
+		Foreground(m.colors.teal).
 		Bold(true)
 
 	descStyle := lipgloss.NewStyle().
-		Foreground(colorSubtext)
+		Foreground(m.colors.subtext)
 
 	sepStyle := lipgloss.NewStyle().
-		Foreground(colorSurface)
+		Foreground(m.colors.surface)
 
 	sep := sepStyle.Render("────────────────────────────────────────────")
 
@@ -720,30 +722,30 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("/") + descStyle.Render("     Search/filter         ") + keyStyle.Render("O") + descStyle.Render("       Settings") + "\n" +
 		"  " + keyStyle.Render("?") + descStyle.Render("     Toggle help           ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n\n" +
 		sep + "\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorYellow).Render("💡") + dimStyle.Render(" Tip: Hold Shift to select text in agent view") + "\n\n" +
-		"  " + dimStyle.Render("Press any key to close")
+		"  " + lipgloss.NewStyle().Foreground(m.colors.yellow).Render("💡") + m.dimStyle().Render(" Tip: Hold Shift to select text in agent view") + "\n\n" +
+		"  " + m.dimStyle().Render("Press any key to close")
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
+		BorderForeground(m.colors.blue).
 		Padding(1, 2).
 		Render(help)
 }
 
 func (m *Model) renderConfirmDialog() string {
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorRed).
+		Foreground(m.colors.red).
 		Bold(true)
 
 	content := titleStyle.Render("⚠ Confirm") + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorText).Render(m.confirmMsg) + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorGreen).Render("[y]") + dimStyle.Render(" Yes    ") +
-		lipgloss.NewStyle().Foreground(colorRed).Render("[n]") + dimStyle.Render(" No    ") +
-		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
+		"  " + lipgloss.NewStyle().Foreground(m.colors.text).Render(m.confirmMsg) + "\n\n" +
+		"  " + lipgloss.NewStyle().Foreground(m.colors.green).Render("[y]") + m.dimStyle().Render(" Yes    ") +
+		lipgloss.NewStyle().Foreground(m.colors.red).Render("[n]") + m.dimStyle().Render(" No    ") +
+		lipgloss.NewStyle().Foreground(m.colors.muted).Render("[Esc]") + m.dimStyle().Render(" Cancel")
 
 	return lipgloss.NewStyle().
 		Border(columnBorder).
-		BorderForeground(colorRed).
+		BorderForeground(m.colors.red).
 		Padding(1, 2).
 		Render(content)
 }
@@ -753,15 +755,15 @@ func (m *Model) renderShuttingDown() string {
 	msg := fmt.Sprintf("Stopping %d agent(s)...", count)
 
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorYellow).
+		Foreground(m.colors.yellow).
 		Bold(true)
 
 	content := titleStyle.Render(m.spinner.View()+" Shutting Down") + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorText).Render(msg)
+		"  " + lipgloss.NewStyle().Foreground(m.colors.text).Render(msg)
 
 	dialog := lipgloss.NewStyle().
 		Border(columnBorder).
-		BorderForeground(colorYellow).
+		BorderForeground(m.colors.yellow).
 		Padding(1, 2).
 		Render(content)
 
@@ -781,15 +783,15 @@ func (m *Model) renderSpawning() string {
 	}
 
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorGreen).
+		Foreground(m.colors.green).
 		Bold(true)
 
 	content := titleStyle.Render(m.spinner.View()+" Starting "+agentName) + "\n\n" +
-		"  " + dimStyle.Render("[Esc] Cancel")
+		"  " + m.dimStyle().Render("[Esc] Cancel")
 
 	dialog := lipgloss.NewStyle().
 		Border(columnBorder).
-		BorderForeground(colorGreen).
+		BorderForeground(m.colors.green).
 		Padding(1, 2).
 		Render(content)
 
@@ -822,13 +824,13 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorGreen).
+		Foreground(m.colors.green).
 		Bold(true)
 
-	labelStyle := lipgloss.NewStyle().Foreground(colorSubtext)
-	activeLabelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
-	lockedStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
-	descriptionStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	labelStyle := lipgloss.NewStyle().Foreground(m.colors.subtext)
+	activeLabelStyle := lipgloss.NewStyle().Foreground(m.colors.teal).Bold(true)
+	lockedStyle := lipgloss.NewStyle().Foreground(m.colors.muted).Italic(true)
+	descriptionStyle := lipgloss.NewStyle().Foreground(m.colors.muted).Italic(true)
 
 	titleLabel := labelStyle
 	descLabel := labelStyle
@@ -882,15 +884,15 @@ func (m *Model) renderTicketForm() string {
 	projectField := m.renderProjectSelector()
 
 	titleCharCount := fmt.Sprintf("%d/100", len(m.titleInput.Value()))
-	titleCharStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	titleCharStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 	if len(m.titleInput.Value()) > 80 {
-		titleCharStyle = lipgloss.NewStyle().Foreground(colorYellow)
+		titleCharStyle = lipgloss.NewStyle().Foreground(m.colors.yellow)
 	}
 	if len(m.titleInput.Value()) >= 100 {
-		titleCharStyle = lipgloss.NewStyle().Foreground(colorRed)
+		titleCharStyle = lipgloss.NewStyle().Foreground(m.colors.red)
 	}
 
-	focusIndicator := lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
+	focusIndicator := lipgloss.NewStyle().Foreground(m.colors.teal).Render("▸ ")
 	noFocus := "  "
 
 	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, worktreeFocus, agentFocus, blockerFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
@@ -1039,7 +1041,7 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	var visibleLines []string
-	scrollIndicatorStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+	scrollIndicatorStyle := lipgloss.NewStyle().Foreground(m.colors.teal).Bold(true)
 
 	hasAboveIndicator := needsScroll && m.formScrollOffset > 0
 	hasBelowIndicator := needsScroll && m.formScrollOffset+viewportHeight < totalLines
@@ -1072,9 +1074,9 @@ func (m *Model) renderTicketForm() string {
 
 	content := titleStyle.Render("◈ "+formTitle) + "\n\n" + strings.Join(visibleLines, "\n")
 
-	footerHints := lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Next  ") +
-		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"  ") +
-		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
+	footerHints := lipgloss.NewStyle().Foreground(m.colors.teal).Render("[Tab]") + m.dimStyle().Render(" Next  ") +
+		lipgloss.NewStyle().Foreground(m.colors.green).Render("[Ctrl+S]") + m.dimStyle().Render(" "+actionText+"  ") +
+		lipgloss.NewStyle().Foreground(m.colors.muted).Render("[Esc]") + m.dimStyle().Render(" Cancel")
 	content += "\n\n  " + footerHints
 
 	formWidth := min(60, m.width-4)
@@ -1084,7 +1086,7 @@ func (m *Model) renderTicketForm() string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorGreen).
+		BorderForeground(m.colors.green).
 		Padding(1, 2).
 		Width(formWidth).
 		Render(content)
@@ -1096,18 +1098,18 @@ func (m *Model) renderPrioritySelector() string {
 		label string
 		color lipgloss.Color
 	}{
-		{1, "Critical", colorRed},
+		{1, "Critical", m.colors.red},
 		{2, "High", lipgloss.Color("#fab387")},
-		{3, "Medium", colorYellow},
-		{4, "Low", colorBlue},
-		{5, "Lowest", colorMuted},
+		{3, "Medium", m.colors.yellow},
+		{4, "Low", m.colors.blue},
+		{5, "Lowest", m.colors.muted},
 	}
 
 	var parts []string
 	for _, p := range priorities {
 		style := lipgloss.NewStyle().Foreground(p.color)
 		if m.ticketPriority == p.level {
-			style = style.Bold(true).Background(colorSurface).Padding(0, 1)
+			style = style.Bold(true).Background(m.colors.surface).Padding(0, 1)
 			parts = append(parts, style.Render(fmt.Sprintf("● %s", p.label)))
 		} else {
 			parts = append(parts, style.Render(fmt.Sprintf("○ %d", p.level)))
@@ -1116,30 +1118,30 @@ func (m *Model) renderPrioritySelector() string {
 
 	hint := ""
 	if m.ticketFormField == formFieldPriority {
-		hint = "  " + dimStyle.Render("← → or 1-5")
+		hint = "  " + m.dimStyle().Render("← → or 1-5")
 	}
 
 	return strings.Join(parts, "  ") + hint
 }
 
 func (m *Model) renderWorktreeSelector() string {
-	worktreeStyle := lipgloss.NewStyle().Foreground(colorGreen)
-	mainRepoStyle := lipgloss.NewStyle().Foreground(colorYellow)
+	worktreeStyle := lipgloss.NewStyle().Foreground(m.colors.green)
+	mainRepoStyle := lipgloss.NewStyle().Foreground(m.colors.yellow)
 
 	var worktreeOption, mainOption string
 	if m.ticketUseWorktree {
-		worktreeStyle = worktreeStyle.Bold(true).Background(colorSurface).Padding(0, 1)
+		worktreeStyle = worktreeStyle.Bold(true).Background(m.colors.surface).Padding(0, 1)
 		worktreeOption = worktreeStyle.Render("● Worktree")
 		mainOption = mainRepoStyle.Render("○ Main Repo")
 	} else {
-		mainRepoStyle = mainRepoStyle.Bold(true).Background(colorSurface).Padding(0, 1)
+		mainRepoStyle = mainRepoStyle.Bold(true).Background(m.colors.surface).Padding(0, 1)
 		worktreeOption = worktreeStyle.Render("○ Worktree")
 		mainOption = mainRepoStyle.Render("● Main Repo")
 	}
 
 	hint := ""
 	if m.ticketFormField == formFieldWorktree {
-		hint = "  " + dimStyle.Render("Space to toggle")
+		hint = "  " + m.dimStyle().Render("Space to toggle")
 	}
 
 	return worktreeOption + "  " + mainOption + hint
@@ -1148,14 +1150,14 @@ func (m *Model) renderWorktreeSelector() string {
 func (m *Model) renderAgentSelector() string {
 	agents := m.getAgentNames()
 	if len(agents) == 0 {
-		return dimStyle.Render("No agents configured")
+		return m.dimStyle().Render("No agents configured")
 	}
 
 	var parts []string
 	for _, agent := range agents {
-		style := lipgloss.NewStyle().Foreground(colorBlue)
+		style := lipgloss.NewStyle().Foreground(m.colors.blue)
 		if m.ticketAgent == agent {
-			style = style.Bold(true).Background(colorSurface).Padding(0, 1)
+			style = style.Bold(true).Background(m.colors.surface).Padding(0, 1)
 			parts = append(parts, style.Render("● "+agent))
 		} else {
 			parts = append(parts, style.Render("○ "+agent))
@@ -1164,9 +1166,9 @@ func (m *Model) renderAgentSelector() string {
 
 	hint := ""
 	if m.ticketFormField == formFieldAgent && !m.agentLocked {
-		hint = "  " + dimStyle.Render("← → to select")
+		hint = "  " + m.dimStyle().Render("← → to select")
 	} else if m.agentLocked {
-		hint = "  " + dimStyle.Render("(locked - agent already spawned)")
+		hint = "  " + m.dimStyle().Render("(locked - agent already spawned)")
 	}
 
 	return strings.Join(parts, "  ") + hint
@@ -1174,13 +1176,13 @@ func (m *Model) renderAgentSelector() string {
 
 func (m *Model) renderBlockerSelector() string {
 	if len(m.blockerCandidates) == 0 {
-		return dimStyle.Render("No other tickets available")
+		return m.dimStyle().Render("No other tickets available")
 	}
 
 	if m.ticketFormField != formFieldBlockedBy {
 		count := len(m.selectedBlockers)
 		if count == 0 {
-			return dimStyle.Render("None selected")
+			return m.dimStyle().Render("None selected")
 		}
 		var names []string
 		for id := range m.selectedBlockers {
@@ -1193,7 +1195,7 @@ func (m *Model) renderBlockerSelector() string {
 			}
 		}
 		sort.Strings(names)
-		return lipgloss.NewStyle().Foreground(colorTeal).Render(strings.Join(names, ", "))
+		return lipgloss.NewStyle().Foreground(m.colors.teal).Render(strings.Join(names, ", "))
 	}
 
 	var lines []string
@@ -1206,7 +1208,7 @@ func (m *Model) renderBlockerSelector() string {
 	for i, ticket := range visibleCandidates {
 		if i >= maxVisible {
 			remaining := len(visibleCandidates) - maxVisible
-			lines = append(lines, dimStyle.Render(fmt.Sprintf("  ... and %d more", remaining)))
+			lines = append(lines, m.dimStyle().Render(fmt.Sprintf("  ... and %d more", remaining)))
 			break
 		}
 
@@ -1228,20 +1230,20 @@ func (m *Model) renderBlockerSelector() string {
 		isHovered := i == m.blockerListIndex
 
 		checkbox := "[ ] "
-		checkboxStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		checkboxStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 		if isSelected {
 			checkbox = "[✓] "
-			checkboxStyle = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+			checkboxStyle = lipgloss.NewStyle().Foreground(m.colors.green).Bold(true)
 		}
 
 		cursor := "  "
-		nameStyle := lipgloss.NewStyle().Foreground(colorText)
-		projStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		nameStyle := lipgloss.NewStyle().Foreground(m.colors.text)
+		projStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 
 		if isHovered {
-			cursor = lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
-			nameStyle = nameStyle.Bold(true).Foreground(colorTeal)
-			projStyle = projStyle.Foreground(colorSubtext)
+			cursor = lipgloss.NewStyle().Foreground(m.colors.teal).Render("▸ ")
+			nameStyle = nameStyle.Bold(true).Foreground(m.colors.teal)
+			projStyle = projStyle.Foreground(m.colors.subtext)
 		}
 
 		line := cursor + checkboxStyle.Render(checkbox) + nameStyle.Render(name)
@@ -1252,11 +1254,11 @@ func (m *Model) renderBlockerSelector() string {
 	}
 
 	if len(visibleCandidates) == 0 {
-		lines = append(lines, dimStyle.Render("No matching tickets"))
+		lines = append(lines, m.dimStyle().Render("No matching tickets"))
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("↑↓ navigate  Space/Enter toggle  Tab next"))
+	lines = append(lines, m.dimStyle().Render("↑↓ navigate  Space/Enter toggle  Tab next"))
 
 	return strings.Join(lines, "\n  ")
 }
@@ -1269,27 +1271,27 @@ func (m *Model) renderWithOverlay(overlay string) string {
 		lipgloss.Center,
 		overlay,
 		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(colorBase),
+		lipgloss.WithWhitespaceForeground(m.colors.base),
 	)
 }
 
 func (m *Model) renderSettingsView() string {
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorMauve).
+		Foreground(m.colors.mauve).
 		Bold(true)
 
 	labelStyle := lipgloss.NewStyle().
-		Foreground(colorSubtext)
+		Foreground(m.colors.subtext)
 
 	valueStyle := lipgloss.NewStyle().
-		Foreground(colorText)
+		Foreground(m.colors.text)
 
 	descStyle := lipgloss.NewStyle().
-		Foreground(colorMuted).
+		Foreground(m.colors.muted).
 		Italic(true)
 
 	selectedLabelStyle := lipgloss.NewStyle().
-		Foreground(colorMauve).
+		Foreground(m.colors.mauve).
 		Bold(true)
 
 	var lines []string
@@ -1305,9 +1307,9 @@ func (m *Model) renderSettingsView() string {
 		vStyle := valueStyle
 
 		if i == m.settingsIndex {
-			cursor = lipgloss.NewStyle().Foreground(colorMauve).Render("▸ ")
+			cursor = lipgloss.NewStyle().Foreground(m.colors.mauve).Render("▸ ")
 			lStyle = selectedLabelStyle
-			vStyle = lipgloss.NewStyle().Foreground(colorTeal)
+			vStyle = lipgloss.NewStyle().Foreground(m.colors.teal)
 		}
 
 		line := cursor + lStyle.Render(fmt.Sprintf("%-18s", label)) + " " + vStyle.Render(value)
@@ -1316,7 +1318,7 @@ func (m *Model) renderSettingsView() string {
 		lines = append(lines, "")
 	}
 
-	lines = append(lines, dimStyle.Render("  Config file: ~/.config/openkanban/config.json"))
+	lines = append(lines, m.dimStyle().Render("  Config file: ~/.config/openkanban/config.json"))
 	lines = append(lines, "")
 
 	field := settingsFields[m.settingsIndex]
@@ -1330,14 +1332,14 @@ func (m *Model) renderSettingsView() string {
 		actionHint = "Edit"
 	}
 
-	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" "+actionHint+"  ")+
-		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Close"))
+	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(m.colors.teal).Render("[Enter]")+m.dimStyle().Render(" "+actionHint+"  ")+
+		lipgloss.NewStyle().Foreground(m.colors.muted).Render("[Esc]")+m.dimStyle().Render(" Close"))
 
 	content := strings.Join(lines, "\n")
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorMauve).
+		BorderForeground(m.colors.mauve).
 		Padding(1, 2).
 		Render(content)
 }
@@ -1367,17 +1369,17 @@ func (m *Model) renderAgentView() string {
 		}
 	}
 
-	breadcrumbStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	breadcrumbStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorBlue).
+		Foreground(m.colors.blue).
 		Bold(true)
 
 	header := breadcrumbStyle.Render("Board → ") + titleStyle.Render(title)
 
 	if projectName != "" {
 		projBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorTeal).
+			Foreground(m.colors.base).
+			Background(m.colors.teal).
 			Padding(0, 1).
 			Render(projectName)
 		header = header + "  " + projBadge
@@ -1385,8 +1387,8 @@ func (m *Model) renderAgentView() string {
 
 	if agentType != "" {
 		agentBadge := lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorBlue).
+			Foreground(m.colors.base).
+			Background(m.colors.blue).
 			Padding(0, 1).
 			Render(agentType)
 		header = header + "  " + agentBadge
@@ -1394,7 +1396,7 @@ func (m *Model) renderAgentView() string {
 
 	if sessionDuration != "" {
 		durationBadge := lipgloss.NewStyle().
-			Foreground(colorMuted).
+			Foreground(m.colors.muted).
 			Render("⏱ " + sessionDuration)
 		header = header + "  " + durationBadge
 	}
@@ -1404,7 +1406,7 @@ func (m *Model) renderAgentView() string {
 		blockedBy := m.globalStore.GetBlockedBy(ticket.ID)
 		blocks := m.globalStore.GetBlocks(ticket.ID)
 		if len(blockedBy) > 0 || len(blocks) > 0 {
-			depStyle := lipgloss.NewStyle().Foreground(colorMuted)
+			depStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 			var depParts []string
 			if len(blockedBy) > 0 {
 				var names []string
@@ -1436,12 +1438,12 @@ func (m *Model) renderAgentView() string {
 	}
 
 	paneIndicator := lipgloss.NewStyle().
-		Foreground(colorMuted).
+		Foreground(m.colors.muted).
 		Render(fmt.Sprintf("[%d/%d]", paneIndex, activePaneCount))
 
-	keyStyle := lipgloss.NewStyle().Foreground(colorTeal)
+	keyStyle := lipgloss.NewStyle().Foreground(m.colors.teal)
 	hints := paneIndicator + "  " +
-		keyStyle.Render("Ctrl+g") + dimStyle.Render(" Board")
+		keyStyle.Render("Ctrl+g") + m.dimStyle().Render(" Board")
 
 	spacing := m.width - lipgloss.Width(header) - lipgloss.Width(hints)
 	spacing = max(spacing, 0)
@@ -1478,22 +1480,22 @@ func formatDuration(d time.Duration) string {
 
 func (m *Model) renderFilterInput() string {
 	inputStyle := lipgloss.NewStyle().
-		Foreground(colorBase).
-		Background(colorTeal).
+		Foreground(m.colors.base).
+		Background(m.colors.teal).
 		Padding(0, 1)
 	return inputStyle.Render("/ " + m.filterInput.View())
 }
 
 func (m *Model) renderActiveFilter() string {
 	filterStyle := lipgloss.NewStyle().
-		Foreground(colorBase).
-		Background(colorYellow).
+		Foreground(m.colors.base).
+		Background(m.colors.yellow).
 		Bold(true).
 		Padding(0, 1)
 
 	clearStyle := lipgloss.NewStyle().
-		Foreground(colorBase).
-		Background(colorRed).
+		Foreground(m.colors.base).
+		Background(m.colors.red).
 		Padding(0, 1)
 
 	filterText := m.filterQuery
@@ -1516,7 +1518,7 @@ func (m *Model) renderActiveFilter() string {
 
 func (m *Model) renderFilterHint() string {
 	return lipgloss.NewStyle().
-		Foreground(colorMuted).
+		Foreground(m.colors.muted).
 		Render("/ search (@project to filter)")
 }
 
@@ -1531,14 +1533,14 @@ func (m *Model) countVisibleTickets() int {
 func (m *Model) renderProjectSelector() string {
 	projects := m.globalStore.Projects()
 	if len(projects) == 0 {
-		return dimStyle.Render("No projects yet — press Enter to add one")
+		return m.dimStyle().Render("No projects yet — press Enter to add one")
 	}
 
 	if m.ticketFormField != formFieldProject {
 		if m.selectedProject != nil {
-			return lipgloss.NewStyle().Foreground(colorTeal).Render(m.selectedProject.Name)
+			return lipgloss.NewStyle().Foreground(m.colors.teal).Render(m.selectedProject.Name)
 		}
-		return dimStyle.Render("Tab to select project")
+		return m.dimStyle().Render("Tab to select project")
 	}
 
 	if m.showAddProjectForm {
@@ -1550,14 +1552,14 @@ func (m *Model) renderProjectSelector() string {
 		name := p.Name
 		path := shortenPath(p.RepoPath)
 
-		nameStyle := lipgloss.NewStyle().Foreground(colorText)
-		pathStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		nameStyle := lipgloss.NewStyle().Foreground(m.colors.text)
+		pathStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 		prefix := "  "
 
 		if i == m.projectListIndex {
-			nameStyle = nameStyle.Foreground(colorTeal).Bold(true)
-			pathStyle = pathStyle.Foreground(colorSubtext)
-			prefix = lipgloss.NewStyle().Foreground(colorTeal).Render("● ")
+			nameStyle = nameStyle.Foreground(m.colors.teal).Bold(true)
+			pathStyle = pathStyle.Foreground(m.colors.subtext)
+			prefix = lipgloss.NewStyle().Foreground(m.colors.teal).Render("● ")
 		} else {
 			prefix = "○ "
 		}
@@ -1566,39 +1568,39 @@ func (m *Model) renderProjectSelector() string {
 		lines = append(lines, line)
 	}
 
-	addOption := "○ " + lipgloss.NewStyle().Foreground(colorGreen).Render("+ Add project...")
+	addOption := "○ " + lipgloss.NewStyle().Foreground(m.colors.green).Render("+ Add project...")
 	if m.projectListIndex == len(projects) {
-		addOption = lipgloss.NewStyle().Foreground(colorTeal).Render("● ") +
-			lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("+ Add project...")
+		addOption = lipgloss.NewStyle().Foreground(m.colors.teal).Render("● ") +
+			lipgloss.NewStyle().Foreground(m.colors.green).Bold(true).Render("+ Add project...")
 	}
 	lines = append(lines, addOption)
 	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("↑↓ navigate  ⏎ select  d delete"))
+	lines = append(lines, m.dimStyle().Render("↑↓ navigate  ⏎ select  d delete"))
 
 	return strings.Join(lines, "\n  ")
 }
 
 func (m *Model) renderAddProjectForm() string {
-	titleStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	titleStyle := lipgloss.NewStyle().Foreground(m.colors.green).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(m.colors.muted).Italic(true)
 	return titleStyle.Render("Add Project") + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorSubtext).Render("Repository path:") + "\n" +
+		"  " + lipgloss.NewStyle().Foreground(m.colors.subtext).Render("Repository path:") + "\n" +
 		"  " + descStyle.Render("Path to a git repository (e.g. ~/projects/myapp)") + "\n" +
 		"  " + m.addProjectPath.View() + "\n\n" +
-		"  " + dimStyle.Render("⏎ Add  Esc Cancel")
+		"  " + m.dimStyle().Render("⏎ Add  Esc Cancel")
 }
 
 func (m *Model) renderCreateProjectForm() string {
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorGreen).
+		Foreground(m.colors.green).
 		Bold(true)
 
-	labelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	labelStyle := lipgloss.NewStyle().Foreground(m.colors.teal).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(m.colors.muted).Italic(true)
 
 	var errorLine string
 	if m.notification != "" {
-		errorStyle := lipgloss.NewStyle().Foreground(colorRed).Bold(true)
+		errorStyle := lipgloss.NewStyle().Foreground(m.colors.red).Bold(true)
 		errorLine = "\n  " + errorStyle.Render("⚠ "+m.notification) + "\n"
 	}
 
@@ -1608,8 +1610,8 @@ func (m *Model) renderCreateProjectForm() string {
 		"  " + m.addProjectPath.View() + errorLine + "\n" +
 		"  " + descStyle.Render("The project name will be derived from the directory name.") + "\n" +
 		"  " + descStyle.Render("Example: ~/projects/myapp → \"myapp\"") + "\n\n" +
-		"  " + lipgloss.NewStyle().Foreground(colorGreen).Render("[Enter]") + dimStyle.Render(" Add  ") +
-		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
+		"  " + lipgloss.NewStyle().Foreground(m.colors.green).Render("[Enter]") + m.dimStyle().Render(" Add  ") +
+		lipgloss.NewStyle().Foreground(m.colors.muted).Render("[Esc]") + m.dimStyle().Render(" Cancel")
 
 	formWidth := min(55, m.width-4)
 	if formWidth < 40 {
@@ -1618,7 +1620,7 @@ func (m *Model) renderCreateProjectForm() string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorGreen).
+		BorderForeground(m.colors.green).
 		Padding(1, 2).
 		Width(formWidth).
 		Render(content)
@@ -1642,21 +1644,21 @@ func (m *Model) renderSidebar() string {
 	availableHeight := m.height - m.headerHeight() - statusHeight
 
 	titleStyle := lipgloss.NewStyle().
-		Foreground(colorBlue).
+		Foreground(m.colors.blue).
 		Bold(true)
 
 	selectedStyle := lipgloss.NewStyle().
-		Foreground(colorBase).
-		Background(colorBlue).
+		Foreground(m.colors.base).
+		Background(m.colors.blue).
 		Bold(true).
 		Padding(0, 1)
 
 	normalStyle := lipgloss.NewStyle().
-		Foreground(colorText).
+		Foreground(m.colors.text).
 		Padding(0, 1)
 
-	checkStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-	uncheckStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	checkStyle := lipgloss.NewStyle().Foreground(m.colors.green).Bold(true)
+	uncheckStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 
 	var lines []string
 
@@ -1719,7 +1721,7 @@ func (m *Model) renderSidebar() string {
 	if m.sidebarIndex == addIndex && m.sidebarFocused {
 		lines = append(lines, selectedStyle.Render("+ Add project"))
 	} else {
-		addStyle := lipgloss.NewStyle().Foreground(colorGreen).Padding(0, 1)
+		addStyle := lipgloss.NewStyle().Foreground(m.colors.green).Padding(0, 1)
 		lines = append(lines, addStyle.Render("+ Add project"))
 	}
 
@@ -1727,7 +1729,7 @@ func (m *Model) renderSidebar() string {
 		lines = append(lines, "")
 	}
 
-	hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	hintStyle := lipgloss.NewStyle().Foreground(m.colors.muted).Italic(true)
 	if m.sidebarFocused {
 		lines = append(lines, hintStyle.Render("  j/k ⏎toggle a/d"))
 	} else {
@@ -1743,9 +1745,9 @@ func (m *Model) renderSidebar() string {
 		BorderStyle(lipgloss.NormalBorder())
 
 	if m.sidebarFocused {
-		style = style.BorderForeground(colorBlue)
+		style = style.BorderForeground(m.colors.blue)
 	} else {
-		style = style.BorderForeground(colorSurface)
+		style = style.BorderForeground(m.colors.surface)
 	}
 
 	return style.Render(content)
@@ -1758,20 +1760,37 @@ func (m *Model) boardWidth() int {
 	return m.width
 }
 
-var (
-	colorBase    = lipgloss.Color("#1e1e2e")
-	colorSurface = lipgloss.Color("#313244")
-	colorOverlay = lipgloss.Color("#45475a")
-	colorText    = lipgloss.Color("#cdd6f4")
-	colorSubtext = lipgloss.Color("#a6adc8")
-	colorMuted   = lipgloss.Color("#6c7086")
-	colorBlue    = lipgloss.Color("#89b4fa")
-	colorGreen   = lipgloss.Color("#a6e3a1")
-	colorYellow  = lipgloss.Color("#f9e2af")
-	colorRed     = lipgloss.Color("#f38ba8")
-	colorMauve   = lipgloss.Color("#cba6f7")
-	colorTeal    = lipgloss.Color("#94e2d5")
-)
+type uiColors struct {
+	base    lipgloss.Color
+	surface lipgloss.Color
+	overlay lipgloss.Color
+	text    lipgloss.Color
+	subtext lipgloss.Color
+	muted   lipgloss.Color
+	blue    lipgloss.Color
+	green   lipgloss.Color
+	yellow  lipgloss.Color
+	red     lipgloss.Color
+	mauve   lipgloss.Color
+	teal    lipgloss.Color
+}
+
+func newUIColors(theme config.Theme) uiColors {
+	return uiColors{
+		base:    lipgloss.Color(theme.Colors.Base),
+		surface: lipgloss.Color(theme.Colors.Surface),
+		overlay: lipgloss.Color(theme.Colors.Overlay),
+		text:    lipgloss.Color(theme.Colors.Text),
+		subtext: lipgloss.Color(theme.Colors.Subtext),
+		muted:   lipgloss.Color(theme.Colors.Muted),
+		blue:    lipgloss.Color(theme.Colors.Blue),
+		green:   lipgloss.Color(theme.Colors.Green),
+		yellow:  lipgloss.Color(theme.Colors.Yellow),
+		red:     lipgloss.Color(theme.Colors.Red),
+		mauve:   lipgloss.Color(theme.Colors.Mauve),
+		teal:    lipgloss.Color(theme.Colors.Teal),
+	}
+}
 
 var (
 	columnBorder = lipgloss.Border{
@@ -1830,13 +1849,6 @@ var (
 	}
 )
 
-var (
-	dimStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
-
-	modeStyle = lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorBlue).
-			Bold(true).
-			Padding(0, 1)
-)
+func (m *Model) dimStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.colors.muted)
+}

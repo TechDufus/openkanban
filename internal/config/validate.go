@@ -169,6 +169,13 @@ func (c *Config) validateAgents(r *ValidationResult) {
 
 // validateUI validates the UI section
 func (c *Config) validateUI(r *ValidationResult) {
+	if c.UI.Theme != "" && !IsValidTheme(c.UI.Theme) {
+		r.AddWarning("ui", "theme",
+			fmt.Sprintf("unknown theme %q, falling back to catppuccin-mocha. Available: %v",
+				c.UI.Theme, ThemeNames()),
+			c.UI.Theme)
+	}
+
 	if c.UI.ColumnWidth <= 0 {
 		r.AddError("ui", "column_width",
 			"must be a positive number",

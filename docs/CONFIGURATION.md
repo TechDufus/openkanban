@@ -153,6 +153,62 @@ Display preferences:
 
 - `sidebar_visible` - Show project sidebar on startup (default: true). Toggle with `[` key during use.
 
+## Themes
+
+OpenKanban supports multiple color themes. Set the theme in your config:
+
+```json
+{
+  "ui": {
+    "theme": "tokyo-night"
+  }
+}
+```
+
+### Available Themes
+
+**Dark themes:**
+- `catppuccin-mocha` (default) - Warm dark theme
+- `catppuccin-macchiato` - Slightly lighter Catppuccin
+- `catppuccin-frappe` - Medium Catppuccin
+- `tokyo-night` - Cool blue dark theme
+- `tokyo-night-storm` - Darker Tokyo Night variant
+- `gruvbox-dark` - Retro warm dark theme
+- `nord` - Arctic blue theme
+- `dracula` - Purple-accented dark theme
+- `one-dark` - Atom-inspired theme
+- `solarized-dark` - Classic low-contrast dark
+- `rose-pine` - Muted warm dark theme
+- `rose-pine-moon` - Lighter Rose Pine
+- `kanagawa` - Japanese-inspired theme
+- `everforest-dark` - Nature-inspired dark
+
+**Light themes:**
+- `catppuccin-latte` - Light Catppuccin
+- `tokyo-night-light` - Light Tokyo Night
+- `gruvbox-light` - Retro warm light theme
+- `solarized-light` - Classic low-contrast light
+- `rose-pine-dawn` - Light Rose Pine
+- `everforest-light` - Nature-inspired light
+
+### Custom Colors
+
+Override specific colors while using a base theme:
+
+```json
+{
+  "ui": {
+    "theme": "catppuccin-mocha",
+    "custom_colors": {
+      "blue": "#7aa2f7",
+      "green": "#9ece6a"
+    }
+  }
+}
+```
+
+Available color fields: `base`, `surface`, `overlay`, `text`, `subtext`, `muted`, `blue`, `green`, `yellow`, `red`, `mauve`, `teal`.
+
 ## OpenCode Integration
 
 OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCode server and connects ticket terminals to it for accurate status detection.
