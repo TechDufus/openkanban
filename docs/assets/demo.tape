@@ -1,34 +1,45 @@
 # OpenKanban Demo
 #
-# Dependencies: vhs, ffmpeg, ttyd (install ffmpeg and ttyd manually)
+# Dependencies: vhs, ffmpeg, ttyd
 # Run with: VHS_NO_SANDBOX=true vhs docs/assets/demo.tape
 #
-# NOTE: VHS doesn't support Ctrl+S, so we use Ctrl+D to submit forms.
-# The actual app uses Ctrl+S - the demo.gif shows correct UI hints.
+# Uses OPENKANBAN_CONFIG_DIR for isolation - safe to run anywhere.
+# Uses $OKBIN to reference the locally built binary (run from repo root).
 #
-# WARNING: This script deletes .openkanban/tickets.json to create a clean demo.
-# Do not run in a project with real tickets you want to keep.
+# VHS QUIRK: VHS cannot send Ctrl+S (terminal interprets it as XOFF flow control).
+# The app accepts both Ctrl+S and Ctrl+X to save forms. Real users use Ctrl+S,
+# but this demo uses Ctrl+X. See internal/ui/model.go handleTicketForm().
+# DO NOT remove Ctrl+X support from the app - it breaks this demo.
 
 Output docs/assets/demo.gif
 
 Set Shell "bash"
 Set FontSize 14
 Set Width 1200
-Set Height 700
+Set Height 800
 Set Theme "Catppuccin Mocha"
 Set Padding 20
 
-# Clear existing tickets for a fresh demo
+# Setup isolated environment
 Hide
-Type "rm -f .openkanban/tickets.json"
+Type "export OPENKANBAN_CONFIG_DIR=$(mktemp -d)"
 Enter
+Type "export DEMO_REPO=$(mktemp -d)"
+Enter
+Type "export OKBIN=$(pwd)/openkanban"
+Enter
+Type "cd $DEMO_REPO && git init -q && echo '# Demo' > README.md && git add . && git commit -q -m 'init'"
+Enter
+Type "$OKBIN new 'My App'"
+Enter
+Sleep 500ms
 Type "clear"
 Enter
-Sleep 300ms
+Sleep 200ms
 Show
 
 # Launch OpenKanban
-Type "./openkanban"
+Type "$OKBIN"
 Sleep 300ms
 Enter
 Sleep 2s
@@ -37,86 +48,105 @@ Sleep 2s
 Type "n"
 Sleep 600ms
 Type "Add user authentication"
-Sleep 400ms
 Tab
 Sleep 400ms
 Type "Implement JWT-based auth with refresh tokens"
 Sleep 400ms
-Ctrl+d
+Ctrl+x
 Sleep 1s
 
 # Create second ticket
 Type "n"
 Sleep 600ms
 Type "Setup database schema"
-Sleep 400ms
 Tab
 Sleep 400ms
 Type "PostgreSQL with migrations"
 Sleep 400ms
-Ctrl+d
+Ctrl+x
+Sleep 1s
+
+# Create third ticket
+Type "n"
+Sleep 600ms
+Type "Build REST API endpoints"
+Tab
+Sleep 400ms
+Type "CRUD operations for all resources"
+Sleep 400ms
+Ctrl+x
 Sleep 1s
 
 # Navigate to first ticket and move to In Progress
 Type "k"
 Sleep 400ms
+Type "k"
+Sleep 400ms
 Type " "
 Sleep 800ms
 
-# Spawn agent (ticket stays selected after move)
+# Spawn agent on first ticket
 Type "s"
-Sleep 9s
-
-# Detach quickly while agent is still running
-Ctrl+g
-Sleep 2s
-
-# Create third ticket while agent runs in background
-Type "n"
-Sleep 600ms
-Type "Build REST API endpoints"
-Sleep 400ms
-Tab
-Sleep 400ms
-Type "CRUD operations for all resources"
-Sleep 400ms
-Ctrl+d
-Sleep 2s
-
-
-# Spawn agent on second ticket
-Type "s"
-Sleep 9s
-
-# Detach quickly while agent is still running
-Ctrl+g
-Sleep 2s
-
-# Navigate back to the first ticket (In Progress column, go up)
-Type "k"
-Sleep 2s
-
-# Re-attach to show the original agent is still running
-Enter
-Sleep 2s
-Type "You're doing great, keep going!"
-Enter
-Sleep 4s
-
-# Detach one more time to show the board with agents still in progress
-Ctrl+g
-Sleep 2s
-
-# Navigate back to the original session and type a message
-Type "j"
-Sleep 2s
-Enter
-Sleep 4s
-
-# Back to main board
-Ctrl+g
 Sleep 3s
+Hide
+Sleep 12s
+Show
+Sleep 2s
+
+# Type a message in the first agent
+Type "Hello from ticket ONE!"
+Enter
+Sleep 2s
+
+# Detach from agent
+Ctrl+g
+Sleep 1.5s
+
+# Move another ticket to In Progress
+Type "h"
+Sleep 400ms
+Type " "
+Sleep 800ms
+
+# Spawn second agent
+Type "s"
+Sleep 3s
+Hide
+Sleep 12s
+Show
+Sleep 2s
+
+# Type a different message in the second agent
+Type "This is ticket TWO - a different session!"
+Enter
+Sleep 2s
+
+# Detach
+Ctrl+g
+Sleep 1.5s
+
+# Re-attach to FIRST agent to show it's still there
+Type "k"
+Sleep 400ms
+Enter
+Sleep 2s
+
+# Detach
+Ctrl+g
+Sleep 1s
+
+# Attach to SECOND agent to show it's different
+Type "j"
+Sleep 400ms
+Enter
+Sleep 2s
+
+# Detach and show final board with both agents running
+Ctrl+g
+Sleep 2s
 
 # Quit
 Type "q"
+Sleep 500ms
+Type "y"
 Sleep 500ms
