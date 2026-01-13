@@ -381,25 +381,57 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 	}
 
 	var seq []byte
-	x, y := msg.X+1, msg.Y+1
-	if x > 223 {
-		x = 223
-	}
-	if y > 223 {
-		y = 223
-	}
 
+	// Scroll wheel: always handle, but use different encoding based on mouse mode
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
-		seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
+		if p.mouseEnabled {
+			x, y := msg.X+1, msg.Y+1
+			if x > 223 {
+				x = 223
+			}
+			if y > 223 {
+				y = 223
+			}
+			seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
+		} else {
+			// Send cursor up keys for scroll when mouse mode not enabled
+			seq = []byte{'\x1b', '[', 'A', '\x1b', '[', 'A', '\x1b', '[', 'A'}
+		}
 	case tea.MouseButtonWheelDown:
-		seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
-	case tea.MouseButtonLeft:
-		seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
-	case tea.MouseButtonRight:
-		seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
-	case tea.MouseButtonMiddle:
-		seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
+		if p.mouseEnabled {
+			x, y := msg.X+1, msg.Y+1
+			if x > 223 {
+				x = 223
+			}
+			if y > 223 {
+				y = 223
+			}
+			seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
+		} else {
+			// Send cursor down keys for scroll when mouse mode not enabled
+			seq = []byte{'\x1b', '[', 'B', '\x1b', '[', 'B', '\x1b', '[', 'B'}
+		}
+	default:
+		// Button clicks: only forward when mouse mode is enabled
+		if !p.mouseEnabled {
+			return
+		}
+		x, y := msg.X+1, msg.Y+1
+		if x > 223 {
+			x = 223
+		}
+		if y > 223 {
+			y = 223
+		}
+		switch msg.Button {
+		case tea.MouseButtonLeft:
+			seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
+		case tea.MouseButtonRight:
+			seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
+		case tea.MouseButtonMiddle:
+			seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
+		}
 	}
 
 	if len(seq) > 0 {
