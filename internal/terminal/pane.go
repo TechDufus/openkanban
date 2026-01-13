@@ -380,61 +380,34 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 		return
 	}
 
-	// Block all motion events
-	if msg.Action == tea.MouseActionMotion {
+	// Block all mouse events unless app has enabled mouse tracking.
+	// Without mouse tracking, X10 sequences appear as garbage text.
+	// Scroll requires scrollback buffer which doesn't exist (see #95).
+	if !p.mouseEnabled {
 		return
 	}
 
+	// Forward mouse events only when app has enabled mouse tracking
 	var seq []byte
+	x, y := msg.X+1, msg.Y+1
+	if x > 223 {
+		x = 223
+	}
+	if y > 223 {
+		y = 223
+	}
 
-	// Handle scroll wheel - convert to Page Up/Down when mouse mode not enabled
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
-		if p.mouseEnabled {
-			x, y := msg.X+1, msg.Y+1
-			if x > 223 {
-				x = 223
-			}
-			if y > 223 {
-				y = 223
-			}
-			seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
-		} else {
-			// Page Up - works in most CLI apps for scrolling
-			seq = []byte{'\x1b', '[', '5', '~'}
-		}
+		seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
 	case tea.MouseButtonWheelDown:
-		if p.mouseEnabled {
-			x, y := msg.X+1, msg.Y+1
-			if x > 223 {
-				x = 223
-			}
-			if y > 223 {
-				y = 223
-			}
-			seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
-		} else {
-			// Page Down - works in most CLI apps for scrolling
-			seq = []byte{'\x1b', '[', '6', '~'}
-		}
-	// Button clicks: only forward when mouse mode enabled
-	case tea.MouseButtonLeft, tea.MouseButtonRight, tea.MouseButtonMiddle:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			x, y := msg.X+1, msg.Y+1
-			if x > 223 {
-				x = 223
-			}
-			if y > 223 {
-				y = 223
-			}
-			btn := byte(0) // left
-			if msg.Button == tea.MouseButtonMiddle {
-				btn = 1
-			} else if msg.Button == tea.MouseButtonRight {
-				btn = 2
-			}
-			seq = []byte{'\x1b', '[', 'M', byte(btn + 32), byte(x + 32), byte(y + 32)}
-		}
+		seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonLeft:
+		seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonRight:
+		seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
+	case tea.MouseButtonMiddle:
+		seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
 	}
 
 	if len(seq) > 0 {
