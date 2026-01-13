@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -211,5 +213,22 @@ func TestStatusDetectorCaching(t *testing.T) {
 	result := d.readStatusFile("test-session")
 	if result != board.AgentWorking {
 		t.Errorf("readStatusFile should return cached status; got %q, want %q", result, board.AgentWorking)
+	}
+}
+
+func TestReadStatusFile_FromDisk(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	d := NewStatusDetector()
+	d.statusDirs = []string{tmpDir}
+
+	statusFile := filepath.Join(tmpDir, "test-session.status")
+	if err := os.WriteFile(statusFile, []byte("working"), 0644); err != nil {
+		t.Fatalf("failed to create status file: %v", err)
+	}
+
+	result := d.readStatusFile("test-session")
+	if result != board.AgentWorking {
+		t.Errorf("readStatusFile should return AgentWorking; got %q", result)
 	}
 }
