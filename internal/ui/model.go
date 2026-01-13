@@ -1244,6 +1244,12 @@ func (m *Model) handleProjectListNav(msg tea.KeyMsg) tea.Cmd {
 			m.confirmDeleteProject(projects[m.projectListIndex])
 		}
 	}
+
+	// Auto-select the highlighted project (if not on "+ Add project" option)
+	if m.projectListIndex < len(projects) {
+		m.selectedProject = projects[m.projectListIndex]
+	}
+
 	return nil
 }
 
