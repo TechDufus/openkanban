@@ -380,38 +380,60 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 		return
 	}
 
-	// Block all motion events - only handle press for clicks, wheel for scroll
+	// Block all motion events
 	if msg.Action == tea.MouseActionMotion {
 		return
 	}
 
 	var seq []byte
-	x, y := msg.X+1, msg.Y+1
-	if x > 223 {
-		x = 223
-	}
-	if y > 223 {
-		y = 223
-	}
 
+	// Handle scroll wheel - convert to Page Up/Down when mouse mode not enabled
 	switch msg.Button {
-	// Scroll wheel: always forward (apps handle scroll internally)
 	case tea.MouseButtonWheelUp:
-		seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
+		if p.mouseEnabled {
+			x, y := msg.X+1, msg.Y+1
+			if x > 223 {
+				x = 223
+			}
+			if y > 223 {
+				y = 223
+			}
+			seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
+		} else {
+			// Page Up - works in most CLI apps for scrolling
+			seq = []byte{'\x1b', '[', '5', '~'}
+		}
 	case tea.MouseButtonWheelDown:
-		seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
-	// Button clicks: only forward press when mouse mode is enabled
-	case tea.MouseButtonLeft:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
+		if p.mouseEnabled {
+			x, y := msg.X+1, msg.Y+1
+			if x > 223 {
+				x = 223
+			}
+			if y > 223 {
+				y = 223
+			}
+			seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
+		} else {
+			// Page Down - works in most CLI apps for scrolling
+			seq = []byte{'\x1b', '[', '6', '~'}
 		}
-	case tea.MouseButtonRight:
+	// Button clicks: only forward when mouse mode enabled
+	case tea.MouseButtonLeft, tea.MouseButtonRight, tea.MouseButtonMiddle:
 		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
-		}
-	case tea.MouseButtonMiddle:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
+			x, y := msg.X+1, msg.Y+1
+			if x > 223 {
+				x = 223
+			}
+			if y > 223 {
+				y = 223
+			}
+			btn := byte(0) // left
+			if msg.Button == tea.MouseButtonMiddle {
+				btn = 1
+			} else if msg.Button == tea.MouseButtonRight {
+				btn = 2
+			}
+			seq = []byte{'\x1b', '[', 'M', byte(btn + 32), byte(x + 32), byte(y + 32)}
 		}
 	}
 
