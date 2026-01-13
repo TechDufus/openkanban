@@ -258,6 +258,16 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, projec
 	if filterProjectID != "" {
 		m.filterProjectIDs[filterProjectID] = true
 	}
+
+	// Reset all agent statuses on startup since there are no active sessions yet.
+	// This prevents stale "working" statuses from persisting after app restart.
+	for _, ticket := range globalStore.All() {
+		if ticket.AgentStatus != board.AgentNone {
+			ticket.AgentStatus = board.AgentNone
+			globalStore.Save(ticket)
+		}
+	}
+
 	m.refreshColumnTickets()
 	return m
 }
@@ -2573,6 +2583,10 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 			sessionName = ticket.AgentSessionID
 		}
 		pane.SetSessionName(sessionName)
+
+		// Clean up any stale status file from previous sessions that may not have
+		// been properly cleaned up (e.g., if the app was closed while an agent was running)
+		agent.CleanupStatusFile(sessionName)
 
 		isNewSession := ticket.AgentSpawnedAt == nil
 		args := make([]string, len(agentCfg.Args))
