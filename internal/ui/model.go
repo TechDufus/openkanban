@@ -162,7 +162,7 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, projec
 
 	di := textarea.New()
 	di.Placeholder = "Optional description..."
-	di.CharLimit = 500
+	di.CharLimit = 0
 	di.SetWidth(40)
 	di.SetHeight(4)
 	di.ShowLineNumbers = false
