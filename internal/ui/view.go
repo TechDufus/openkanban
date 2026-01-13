@@ -984,7 +984,7 @@ func (m *Model) renderTicketForm() string {
 	lines = append(lines, "  "+descriptionStyle.Render("Tickets that must complete before this one"))
 	blockerLines := strings.Split(blockerField, "\n")
 	for _, bl := range blockerLines {
-		lines = append(lines, bl)
+		lines = append(lines, "  "+bl)
 	}
 	fieldEndLines[formFieldBlockedBy] = len(lines) - 1
 	currentLine = len(lines)
@@ -997,7 +997,7 @@ func (m *Model) renderTicketForm() string {
 		lines = append(lines, "  "+descriptionStyle.Render("Repository where this ticket belongs"))
 		projectLines := strings.Split(projectField, "\n")
 		for _, pl := range projectLines {
-			lines = append(lines, pl)
+			lines = append(lines, "  "+pl)
 		}
 		fieldEndLines[formFieldProject] = len(lines) - 1
 	}
@@ -1260,7 +1260,7 @@ func (m *Model) renderBlockerSelector() string {
 	lines = append(lines, "")
 	lines = append(lines, m.dimStyle().Render("↑↓ navigate  Space/Enter toggle  Tab next"))
 
-	return strings.Join(lines, "\n  ")
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) renderWithOverlay(overlay string) string {
@@ -1561,28 +1561,31 @@ func (m *Model) renderProjectSelector() string {
 		pathStyle := lipgloss.NewStyle().Foreground(m.colors.muted)
 		prefix := "  "
 
+		var line string
 		if i == m.projectListIndex {
 			nameStyle = nameStyle.Foreground(m.colors.info).Bold(true)
 			pathStyle = pathStyle.Foreground(m.colors.subtext)
 			prefix = lipgloss.NewStyle().Foreground(m.colors.info).Render("● ")
+			content := prefix + nameStyle.Render(name) + "  " + pathStyle.Render(path)
+			line = lipgloss.NewStyle().Background(m.colors.surface).Padding(0, 1).Render(content)
 		} else {
 			prefix = "○ "
+			line = prefix + nameStyle.Render(name) + "  " + pathStyle.Render(path)
 		}
-
-		line := prefix + nameStyle.Render(name) + "  " + pathStyle.Render(path)
 		lines = append(lines, line)
 	}
 
 	addOption := "○ " + lipgloss.NewStyle().Foreground(m.colors.success).Render("+ Add project...")
 	if m.projectListIndex == len(projects) {
-		addOption = lipgloss.NewStyle().Foreground(m.colors.info).Render("● ") +
+		content := lipgloss.NewStyle().Foreground(m.colors.info).Render("● ") +
 			lipgloss.NewStyle().Foreground(m.colors.success).Bold(true).Render("+ Add project...")
+		addOption = lipgloss.NewStyle().Background(m.colors.surface).Padding(0, 1).Render(content)
 	}
 	lines = append(lines, addOption)
 	lines = append(lines, "")
 	lines = append(lines, m.dimStyle().Render("↑↓ navigate  ⏎ select  d delete"))
 
-	return strings.Join(lines, "\n  ")
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) renderAddProjectForm() string {
