@@ -2585,7 +2585,7 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 			if isNewSession && promptTemplate != "" {
 				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
 				if prompt != "" {
-					args = append(args, "--append-system-prompt", prompt)
+					args = append(args, prompt)
 				}
 			} else if !isNewSession {
 				hasFlag := false
