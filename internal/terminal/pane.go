@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,12 +30,14 @@ type Pane struct {
 	workdir     string
 	sessionName string
 	width       int
-	height  int
+	height      int
 
 	cachedView      string
 	lastRender      time.Time
 	dirty           bool
 	renderScheduled bool
+
+	mouseEnabled bool // tracks if child process has enabled mouse tracking
 }
 
 func New(id string, width, height int) *Pane {
@@ -304,8 +307,45 @@ func (p *Pane) handleOutput(data []byte) {
 		return
 	}
 
+	p.detectMouseModeChanges(data)
 	p.vt.Write(data)
 	p.dirty = true
+}
+
+// detectMouseModeChanges scans output for mouse tracking mode escape sequences.
+// Called with mutex held.
+func (p *Pane) detectMouseModeChanges(data []byte) {
+	// Mouse tracking enable sequences (any of these enables mouse mode)
+	enableSeqs := [][]byte{
+		[]byte("\x1b[?1000h"), // X10 mouse tracking
+		[]byte("\x1b[?1002h"), // Button-event tracking
+		[]byte("\x1b[?1003h"), // Any-event tracking
+		[]byte("\x1b[?1006h"), // SGR extended mode
+	}
+
+	// Mouse tracking disable sequences
+	disableSeqs := [][]byte{
+		[]byte("\x1b[?1000l"),
+		[]byte("\x1b[?1002l"),
+		[]byte("\x1b[?1003l"),
+		[]byte("\x1b[?1006l"),
+	}
+
+	// Check for enable sequences
+	for _, seq := range enableSeqs {
+		if bytes.Contains(data, seq) {
+			p.mouseEnabled = true
+			return
+		}
+	}
+
+	// Check for disable sequences
+	for _, seq := range disableSeqs {
+		if bytes.Contains(data, seq) {
+			p.mouseEnabled = false
+			return
+		}
+	}
 }
 
 // scheduleRenderTick returns a Cmd to trigger render after throttle interval
@@ -336,7 +376,7 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if !p.running || p.pty == nil {
+	if !p.running || p.pty == nil || !p.mouseEnabled {
 		return
 	}
 
