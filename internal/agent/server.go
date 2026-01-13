@@ -38,6 +38,11 @@ func (s *OpencodeServer) Start() error {
 		return nil
 	}
 
+	// Check if opencode binary exists
+	if _, err := exec.LookPath("opencode"); err != nil {
+		return nil // opencode not installed, skip gracefully
+	}
+
 	if s.isServerAlreadyRunning() {
 		s.running = true
 		return nil
@@ -48,7 +53,11 @@ func (s *OpencodeServer) Start() error {
 		return fmt.Errorf("failed to start opencode server: %w", err)
 	}
 
-	if err := s.waitForReady(5 * time.Second); err != nil {
+	timeout := s.config.Opencode.StartupTimeout
+	if timeout <= 0 {
+		timeout = 10 // default fallback
+	}
+	if err := s.waitForReady(time.Duration(timeout) * time.Second); err != nil {
 		s.cmd.Process.Kill()
 		s.cmd = nil
 		return err

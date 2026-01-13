@@ -58,7 +58,8 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
   "opencode": {
     "server_enabled": true,
     "server_port": 4096,
-    "poll_interval": 1
+    "poll_interval": 1,
+    "startup_timeout": 10
   }
 }
 ```
@@ -230,7 +231,8 @@ OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCo
   "opencode": {
     "server_enabled": true,
     "server_port": 4096,
-    "poll_interval": 1
+    "poll_interval": 1,
+    "startup_timeout": 10
   }
 }
 ```
@@ -238,6 +240,7 @@ OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCo
 - `server_enabled` - Start OpenCode server for enhanced status detection (default: true). When enabled, ticket terminals use `opencode attach` to connect to the shared server.
 - `server_port` - Port for the OpenCode server (default: 4096). If a server is already running on this port, OpenKanban will reuse it.
 - `poll_interval` - Agent status polling interval in seconds (default: 1).
+- `startup_timeout` - Timeout in seconds for OpenCode server to become ready (default: 10).
 
 When `server_enabled` is false, OpenCode runs in standalone mode per-ticket with basic status detection.
 

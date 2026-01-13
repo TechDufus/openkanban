@@ -426,9 +426,10 @@ type BehaviorSettings struct {
 }
 
 type OpencodeSettings struct {
-    ServerEnabled bool `json:"server_enabled"`
-    ServerPort    int  `json:"server_port"`
-    PollInterval  int  `json:"poll_interval"`
+    ServerEnabled  bool `json:"server_enabled"`
+    ServerPort     int  `json:"server_port"`
+    PollInterval   int  `json:"poll_interval"`
+    StartupTimeout int  `json:"startup_timeout"`
 }
 ```
 
@@ -485,7 +486,8 @@ type OpencodeSettings struct {
   "opencode": {
     "server_enabled": true,
     "server_port": 4096,
-    "poll_interval": 1
+    "poll_interval": 1,
+    "startup_timeout": 10
   }
 }
 ```

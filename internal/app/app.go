@@ -43,10 +43,14 @@ func Run(cfg *config.Config, filterPath, version string) error {
 	agentMgr := agent.NewManager(cfg)
 
 	opencodeServer := agent.NewOpencodeServer(cfg)
-	if err := opencodeServer.Start(); err != nil {
-		return fmt.Errorf("failed to start opencode server: %w", err)
+
+	// Only auto-start server if default agent is opencode
+	if cfg.Defaults.DefaultAgent == "opencode" {
+		if err := opencodeServer.Start(); err != nil {
+			return fmt.Errorf("failed to start opencode server: %w", err)
+		}
+		defer opencodeServer.Stop()
 	}
-	defer opencodeServer.Stop()
 
 	updateChecker := update.NewChecker(version)
 	model := ui.NewModel(cfg, globalStore, registry, agentMgr, opencodeServer, filterProjectID, updateChecker)

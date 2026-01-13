@@ -25,6 +25,7 @@ multiple AI coding agents across different tasks and git worktrees.
 Each ticket spawns an embedded terminal pane with its own git worktree
 for safe parallel development.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		cfg, result, err := config.LoadWithValidation(cfgFile)
 		if err != nil {
 			if result != nil && result.HasErrors() {
