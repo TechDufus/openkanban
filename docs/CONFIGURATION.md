@@ -45,7 +45,8 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
     "refresh_interval": 5,
     "column_width": 40,
     "ticket_height": 4,
-    "sidebar_visible": true
+    "sidebar_visible": true,
+    "scrollback_lines": 10000
   },
   "cleanup": {
     "delete_worktree": true,
@@ -147,12 +148,14 @@ Display preferences:
 ```json
 {
   "ui": {
-    "sidebar_visible": true
+    "sidebar_visible": true,
+    "scrollback_lines": 10000
   }
 }
 ```
 
 - `sidebar_visible` - Show project sidebar on startup (default: true). Toggle with `[` key during use.
+- `scrollback_lines` - Number of lines to keep in terminal scrollback buffer (default: 10000). The scrollback buffer stores terminal output that has scrolled off-screen, allowing you to scroll back through agent history with mouse wheel or Shift+PgUp/PgDn.
 
 ## Themes
 

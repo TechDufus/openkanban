@@ -2582,7 +2582,7 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 		branchName = generatedBranch
 		baseBranch = base
 
-		pane := terminal.New(string(ticketID), width, height)
+		pane := terminal.New(string(ticketID), width, height, 0)
 		pane.SetWorkdir(worktreePath)
 
 		// Set session name for terminal identification (priority: AgentSessionID > branch > ticket)

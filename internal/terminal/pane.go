@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
@@ -38,13 +39,25 @@ type Pane struct {
 	renderScheduled bool
 
 	mouseEnabled bool // tracks if child process has enabled mouse tracking
+
+	// Scrollback and viewport state (Issue #95)
+	scrollback      *ScrollbackBuffer
+	altScreenActive bool     // tracks if child process is in alternate screen mode
+	viewportOffset  int      // lines scrolled back (0 = live view)
+	lastTopRow      []vt10x.Glyph // snapshot of row 0 before write for scroll detection
+	scrollbackSize  int      // configured scrollback buffer size
+	selection       *SelectionState // mouse text selection state
 }
 
-func New(id string, width, height int) *Pane {
+func New(id string, width, height int, scrollbackSize int) *Pane {
+	if scrollbackSize <= 0 {
+		scrollbackSize = 10000
+	}
 	return &Pane{
-		id:     id,
-		width:  width,
-		height: height,
+		id:             id,
+		width:          width,
+		height:         height,
+		scrollbackSize: scrollbackSize,
 	}
 }
 
@@ -90,6 +103,14 @@ func (p *Pane) SetSize(width, height int) {
 	p.dirty = true
 	p.cachedView = ""
 
+	// Clear selection on resize (coordinates become invalid)
+	if p.selection != nil && p.selection.IsActive() {
+		p.selection.Clear()
+	}
+
+	// Reset viewport to live view on resize
+	p.viewportOffset = 0
+
 	if p.vt != nil {
 		p.vt.Resize(width, height)
 	}
@@ -107,6 +128,30 @@ func (p *Pane) Size() (width, height int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.width, p.height
+}
+
+// ScrollbackLen returns the number of lines in the scrollback buffer.
+func (p *Pane) ScrollbackLen() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.scrollback == nil {
+		return 0
+	}
+	return p.scrollback.Len()
+}
+
+// ViewportOffset returns how many lines the viewport is scrolled back.
+func (p *Pane) ViewportOffset() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.viewportOffset
+}
+
+// IsAltScreenActive returns whether the terminal is in alternate screen mode.
+func (p *Pane) IsAltScreenActive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.altScreenActive
 }
 
 // --- Bubbletea Messages ---
@@ -141,6 +186,8 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 
 		// Create virtual terminal with current dimensions
 		p.vt = vt10x.New(vt10x.WithSize(p.width, p.height))
+		p.scrollback = NewScrollbackBuffer(p.scrollbackSize)
+		p.selection = NewSelectionState()
 
 		// Build command
 		p.cmd = exec.Command(command, args...)
@@ -308,7 +355,13 @@ func (p *Pane) handleOutput(data []byte) {
 	}
 
 	p.detectMouseModeChanges(data)
+	p.detectAltScreenChanges(data)
+
+	// Capture scrollback: snapshot before, compare after
+	p.captureScrollbackBeforeWrite()
 	p.vt.Write(data)
+	p.captureScrollbackAfterWrite()
+
 	p.dirty = true
 }
 
@@ -348,6 +401,119 @@ func (p *Pane) detectMouseModeChanges(data []byte) {
 	}
 }
 
+// detectAltScreenChanges scans output for alternate screen mode escape sequences.
+// Called with mutex held.
+func (p *Pane) detectAltScreenChanges(data []byte) {
+	// Alternate screen enable sequences (smcup)
+	enableSeqs := [][]byte{
+		[]byte("\x1b[?1049h"), // Save cursor + switch to alt screen
+		[]byte("\x1b[?47h"),   // Switch to alt screen (legacy)
+	}
+
+	// Alternate screen disable sequences (rmcup)
+	disableSeqs := [][]byte{
+		[]byte("\x1b[?1049l"), // Restore cursor + switch from alt screen
+		[]byte("\x1b[?47l"),   // Switch from alt screen (legacy)
+	}
+
+	// Check for enable sequences
+	for _, seq := range enableSeqs {
+		if bytes.Contains(data, seq) {
+			p.altScreenActive = true
+			p.viewportOffset = 0 // Reset viewport when entering alt screen
+			return
+		}
+	}
+
+	// Check for disable sequences
+	for _, seq := range disableSeqs {
+		if bytes.Contains(data, seq) {
+			p.altScreenActive = false
+			return
+		}
+	}
+}
+
+// captureScrollbackBeforeWrite takes a snapshot of row 0 before vt.Write
+// Called with mutex held.
+func (p *Pane) captureScrollbackBeforeWrite() {
+	if p.vt == nil || p.altScreenActive {
+		p.lastTopRow = nil
+		return
+	}
+
+	p.vt.Lock()
+	cols, _ := p.vt.Size()
+	if cols <= 0 {
+		p.vt.Unlock()
+		p.lastTopRow = nil
+		return
+	}
+
+	// Snapshot row 0
+	p.lastTopRow = make([]vt10x.Glyph, cols)
+	for col := 0; col < cols; col++ {
+		p.lastTopRow[col] = p.vt.Cell(col, 0)
+	}
+	p.vt.Unlock()
+}
+
+// captureScrollbackAfterWrite checks if row 0 changed and captures scrolled line
+// Called with mutex held.
+func (p *Pane) captureScrollbackAfterWrite() {
+	if p.vt == nil || p.altScreenActive || p.lastTopRow == nil {
+		return
+	}
+
+	p.vt.Lock()
+	defer p.vt.Unlock()
+
+	cols, _ := p.vt.Size()
+	if cols <= 0 || cols != len(p.lastTopRow) {
+		return
+	}
+
+	// Compare current row 0 with snapshot
+	changed := false
+	for col := 0; col < cols; col++ {
+		if p.vt.Cell(col, 0) != p.lastTopRow[col] {
+			changed = true
+			break
+		}
+	}
+
+	// If row 0 changed and the old content isn't visible anywhere,
+	// the old top row has scrolled off - add to scrollback
+	if changed && !p.isLineVisible(p.lastTopRow) {
+		p.scrollback.Push(p.lastTopRow)
+	}
+
+	p.lastTopRow = nil
+}
+
+// isLineVisible checks if a line is still visible on screen
+// Called with vt.Lock held.
+func (p *Pane) isLineVisible(line []vt10x.Glyph) bool {
+	cols, rows := p.vt.Size()
+	if len(line) != cols {
+		return false
+	}
+
+	for row := 0; row < rows; row++ {
+		match := true
+		for col := 0; col < cols; col++ {
+			if p.vt.Cell(col, row) != line[col] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // scheduleRenderTick returns a Cmd to trigger render after throttle interval
 func (p *Pane) scheduleRenderTick() tea.Cmd {
 	p.mu.Lock()
@@ -380,14 +546,64 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 		return
 	}
 
-	// Block all mouse events unless app has enabled mouse tracking.
-	// Without mouse tracking, X10 sequences appear as garbage text.
-	// Scroll requires scrollback buffer which doesn't exist (see #95).
+	// When mouse tracking is disabled, handle scrolling and selection ourselves
 	if !p.mouseEnabled {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			// Scrolling clears selection
+			if p.selection != nil && p.selection.IsActive() {
+				p.selection.Clear()
+			}
+			p.scrollUp(3)
+			return
+		case tea.MouseButtonWheelDown:
+			if p.selection != nil && p.selection.IsActive() {
+				p.selection.Clear()
+			}
+			p.scrollDown(3)
+			return
+		case tea.MouseButtonLeft:
+			if p.selection != nil {
+				// Convert viewport coordinates to logical position
+				pos := p.viewportToLogical(msg.X, msg.Y)
+				if msg.Action == tea.MouseActionPress {
+					p.selection.Start(pos)
+					p.dirty = true
+				} else if msg.Action == tea.MouseActionMotion {
+					p.selection.Update(pos)
+					p.dirty = true
+				} else if msg.Action == tea.MouseActionRelease {
+					p.selection.Finish()
+					p.dirty = true
+				}
+			}
+			return
+		case tea.MouseButtonRight, tea.MouseButtonMiddle:
+			// Other clicks clear selection
+			if p.selection != nil && p.selection.IsActive() {
+				p.selection.Clear()
+				p.dirty = true
+			}
+			return
+		case tea.MouseButtonNone:
+			// Motion event during selection
+			if p.selection != nil && p.selection.Mode == SelectionSelecting {
+				pos := p.viewportToLogical(msg.X, msg.Y)
+				p.selection.Update(pos)
+				p.dirty = true
+			}
+			return
+		}
 		return
 	}
 
-	// Forward mouse events only when app has enabled mouse tracking
+	// Forward mouse events when app has enabled mouse tracking
+	// Clear any selection when mouse mode is enabled
+	if p.selection != nil && p.selection.IsActive() {
+		p.selection.Clear()
+		p.dirty = true
+	}
+
 	var seq []byte
 	x, y := msg.X+1, msg.Y+1
 	if x > 223 {
@@ -415,6 +631,21 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 	}
 }
 
+// viewportToLogical converts viewport coordinates to logical position
+// Logical position: negative row = scrollback, 0+ = live screen
+// Called with mutex held.
+func (p *Pane) viewportToLogical(x, y int) Position {
+	// When scrolled back, top of viewport shows scrollback
+	// viewportOffset = how many scrollback lines are visible at top
+	// Calculate logical row
+	// If viewportOffset > 0, the top rows are from scrollback
+	// Row 0 in viewport corresponds to scrollback line (scrollbackLen - viewportOffset)
+
+	logicalRow := y - p.viewportOffset
+
+	return Position{Row: logicalRow, Col: x}
+}
+
 // HandleKey processes a key event and sends to PTY
 func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
 	if msg.String() == "ctrl+g" {
@@ -428,12 +659,131 @@ func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
 		return nil
 	}
 
+	key := msg.String()
+
+	// Check for selection copy FIRST (before forwarding Ctrl+C to PTY)
+	if p.selection != nil && p.selection.IsActive() {
+		if key == "ctrl+c" || key == "cmd+c" {
+			p.copySelectionUnlocked()
+			return nil
+		}
+	}
+
+	// Handle scroll navigation keys (work regardless of mouse mode)
+	switch key {
+	case "shift+pgup":
+		_, rows := p.vt.Size()
+		p.scrollUp(rows / 2)
+		return nil
+	case "shift+pgdown":
+		_, rows := p.vt.Size()
+		p.scrollDown(rows / 2)
+		return nil
+	case "shift+home":
+		// Scroll to top of scrollback
+		if p.scrollback != nil {
+			p.viewportOffset = p.scrollback.Len()
+			p.dirty = true
+		}
+		return nil
+	case "shift+end":
+		// Scroll to bottom (live view)
+		p.viewportOffset = 0
+		p.dirty = true
+		return nil
+	case "esc", "escape":
+		// Esc returns to live view if scrolled
+		if p.viewportOffset > 0 {
+			p.viewportOffset = 0
+			p.dirty = true
+			return nil
+		}
+		// Also clear selection on Esc
+		if p.selection != nil && p.selection.IsActive() {
+			p.selection.Clear()
+			p.dirty = true
+			return nil
+		}
+		// Otherwise forward escape to PTY
+	}
+
+	// Snap to live view on any other keyboard input
+	if p.viewportOffset > 0 {
+		p.viewportOffset = 0
+		p.dirty = true
+	}
+
+	// Clear selection on any keyboard input (except copy)
+	if p.selection != nil && p.selection.IsActive() {
+		p.selection.Clear()
+		p.dirty = true
+	}
+
 	input := p.translateKey(msg)
 	if len(input) > 0 {
 		p.pty.Write(input)
 	}
 
 	return nil
+}
+
+// copySelectionUnlocked copies selected text to clipboard
+// Called with mutex held.
+func (p *Pane) copySelectionUnlocked() {
+	if p.selection == nil || !p.selection.IsActive() {
+		return
+	}
+
+	// Get scrollback lines for text extraction
+	var scrollbackLines [][]vt10x.Glyph
+	scrollbackLen := 0
+	if p.scrollback != nil {
+		scrollbackLen = p.scrollback.Len()
+		scrollbackLines = p.scrollback.GetRange(0, scrollbackLen)
+	}
+
+	// Get live screen accessor
+	var liveRows int
+	p.vt.Lock()
+	_, liveRows = p.vt.Size()
+	liveScreen := func(col, row int) vt10x.Glyph {
+		return p.vt.Cell(col, row)
+	}
+
+	text := p.selection.ExtractText(scrollbackLines, liveScreen, liveRows, scrollbackLen)
+	p.vt.Unlock()
+
+	if text != "" {
+		clipboard.WriteAll(text)
+	}
+
+	// Clear selection after copy
+	p.selection.Clear()
+	p.dirty = true
+}
+
+// scrollUp scrolls the viewport up (into scrollback history)
+// Called with mutex held.
+func (p *Pane) scrollUp(lines int) {
+	if p.scrollback == nil {
+		return
+	}
+	maxOffset := p.scrollback.Len()
+	p.viewportOffset += lines
+	if p.viewportOffset > maxOffset {
+		p.viewportOffset = maxOffset
+	}
+	p.dirty = true
+}
+
+// scrollDown scrolls the viewport down (toward live view)
+// Called with mutex held.
+func (p *Pane) scrollDown(lines int) {
+	p.viewportOffset -= lines
+	if p.viewportOffset < 0 {
+		p.viewportOffset = 0
+	}
+	p.dirty = true
 }
 
 // translateKey converts Bubbletea KeyMsg to PTY byte sequences
@@ -556,7 +906,184 @@ func (p *Pane) renderVTUnlocked() string {
 		return ""
 	}
 
+	// If scrolled back, render mixed scrollback + live content
+	if p.viewportOffset > 0 && p.scrollback != nil {
+		return p.renderScrolledViewUnlocked(cols, rows)
+	}
+
 	return p.renderLiveScreenUnlocked(cols, rows)
+}
+
+// renderScrolledViewUnlocked renders a viewport that includes scrollback history
+// Must hold mu and vt.Lock
+func (p *Pane) renderScrolledViewUnlocked(cols, rows int) string {
+	scrollbackLen := p.scrollback.Len()
+	offset := p.viewportOffset
+	if offset > scrollbackLen {
+		offset = scrollbackLen
+	}
+
+	var result strings.Builder
+	result.Grow(rows * cols * 2)
+
+	// Calculate which lines to show
+	// viewportOffset is how many lines we've scrolled back from live view
+	// So if offset=5, we show 5 less live lines and 5 scrollback lines at top
+
+	// Number of scrollback lines visible at top of viewport
+	scrollbackRowsVisible := offset
+	if scrollbackRowsVisible > rows {
+		scrollbackRowsVisible = rows
+	}
+
+	// Starting scrollback index (from the end of scrollback)
+	scrollbackStart := scrollbackLen - offset
+
+	for viewRow := 0; viewRow < rows; viewRow++ {
+		if viewRow > 0 {
+			result.WriteByte('\n')
+		}
+
+		if viewRow < scrollbackRowsVisible {
+			// Render from scrollback
+			scrollbackIdx := scrollbackStart + viewRow
+			line := p.scrollback.Get(scrollbackIdx)
+			// Logical row: negative for scrollback (counting from 0)
+			// scrollbackIdx 0 = oldest line = logicalRow -(scrollbackLen)
+			// scrollbackIdx scrollbackLen-1 = newest scrollback = logicalRow -1
+			logicalRow := scrollbackIdx - scrollbackLen
+			result.WriteString(p.renderGlyphLine(line, cols, logicalRow))
+		} else {
+			// Render from live screen
+			liveRow := viewRow - scrollbackRowsVisible
+			logicalRow := liveRow // Live rows are 0+
+			result.WriteString(p.renderLiveRow(cols, liveRow, logicalRow))
+		}
+	}
+
+	return result.String()
+}
+
+// renderGlyphLine renders a line of glyphs with ANSI styling
+// logicalRow is used for selection highlighting
+func (p *Pane) renderGlyphLine(line []vt10x.Glyph, cols int, logicalRow int) string {
+	var result strings.Builder
+	var currentFG, currentBG vt10x.Color
+	var currentMode int16
+	var batch strings.Builder
+	firstCell := true
+	inSelection := false
+
+	flushBatch := func() {
+		if batch.Len() == 0 {
+			return
+		}
+		if inSelection {
+			result.WriteString("\x1b[7m") // Reverse video for selection
+		} else {
+			result.WriteString(buildANSI(currentFG, currentBG, currentMode))
+		}
+		result.WriteString(batch.String())
+		result.WriteString("\x1b[0m")
+		batch.Reset()
+	}
+
+	for col := 0; col < cols; col++ {
+		var glyph vt10x.Glyph
+		if col < len(line) {
+			glyph = line[col]
+		}
+		ch := glyph.Char
+		if ch == 0 {
+			ch = ' '
+		}
+
+		// Check if this cell is selected
+		cellSelected := p.selection != nil && p.selection.Contains(Position{Row: logicalRow, Col: col})
+
+		// Style changed or selection changed? Flush batch
+		if !firstCell && (glyph.FG != currentFG || glyph.BG != currentBG || glyph.Mode != currentMode || cellSelected != inSelection) {
+			flushBatch()
+		}
+
+		currentFG = glyph.FG
+		currentBG = glyph.BG
+		currentMode = glyph.Mode
+		inSelection = cellSelected
+		firstCell = false
+
+		batch.WriteRune(ch)
+	}
+	flushBatch()
+
+	return result.String()
+}
+
+// renderLiveRow renders a single row from the live terminal screen
+// logicalRow is used for selection highlighting
+// Must hold vt.Lock
+func (p *Pane) renderLiveRow(cols, row int, logicalRow int) string {
+	var result strings.Builder
+	var currentFG, currentBG vt10x.Color
+	var currentMode int16
+	var batch strings.Builder
+	firstCell := true
+	inSelection := false
+
+	flushBatch := func() {
+		if batch.Len() == 0 {
+			return
+		}
+		if inSelection {
+			result.WriteString("\x1b[7m") // Reverse video for selection
+		} else {
+			result.WriteString(buildANSI(currentFG, currentBG, currentMode))
+		}
+		result.WriteString(batch.String())
+		result.WriteString("\x1b[0m")
+		batch.Reset()
+	}
+
+	cursor := p.vt.Cursor()
+	cursorVisible := p.vt.CursorVisible()
+
+	for col := 0; col < cols; col++ {
+		glyph := p.vt.Cell(col, row)
+		ch := glyph.Char
+		if ch == 0 {
+			ch = ' '
+		}
+
+		isCursor := cursorVisible && col == cursor.X && row == cursor.Y
+		cellSelected := p.selection != nil && p.selection.Contains(Position{Row: logicalRow, Col: col})
+
+		// Style changed or selection changed? Flush batch
+		if !firstCell && (glyph.FG != currentFG || glyph.BG != currentBG ||
+			glyph.Mode != currentMode || isCursor || cellSelected != inSelection) {
+			flushBatch()
+		}
+
+		// Handle cursor with reverse video (cursor takes priority over selection)
+		if isCursor {
+			result.WriteString("\x1b[7m") // Reverse
+			result.WriteRune(ch)
+			result.WriteString("\x1b[27m") // Un-reverse
+			firstCell = true
+			inSelection = false
+			continue
+		}
+
+		currentFG = glyph.FG
+		currentBG = glyph.BG
+		currentMode = glyph.Mode
+		inSelection = cellSelected
+		firstCell = false
+
+		batch.WriteRune(ch)
+	}
+	flushBatch()
+
+	return result.String()
 }
 
 // renderLiveScreenUnlocked renders the live terminal screen (must hold mu and vt.Lock)
@@ -577,12 +1104,17 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 		var currentMode int16
 		var batch strings.Builder
 		firstCell := true
+		inSelection := false
 
 		flushBatch := func() {
 			if batch.Len() == 0 {
 				return
 			}
-			result.WriteString(buildANSI(currentFG, currentBG, currentMode, false))
+			if inSelection {
+				result.WriteString("\x1b[7m") // Reverse video for selection
+			} else {
+				result.WriteString(buildANSI(currentFG, currentBG, currentMode))
+			}
 			result.WriteString(batch.String())
 			result.WriteString("\x1b[0m")
 			batch.Reset()
@@ -596,10 +1128,12 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 			}
 
 			isCursor := cursorVisible && col == cursor.X && row == cursor.Y
+			logicalRow := row // When not scrolled, logical row = screen row
+			cellSelected := p.selection != nil && p.selection.Contains(Position{Row: logicalRow, Col: col})
 
-			// Style changed? Flush batch
+			// Style changed or selection changed? Flush batch
 			if !firstCell && (glyph.FG != currentFG || glyph.BG != currentBG ||
-				glyph.Mode != currentMode || isCursor) {
+				glyph.Mode != currentMode || isCursor || cellSelected != inSelection) {
 				flushBatch()
 			}
 
@@ -609,12 +1143,14 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 				result.WriteRune(ch)
 				result.WriteString("\x1b[27m") // Un-reverse
 				firstCell = true
+				inSelection = false
 				continue
 			}
 
 			currentFG = glyph.FG
 			currentBG = glyph.BG
 			currentMode = glyph.Mode
+			inSelection = cellSelected
 			firstCell = false
 
 			batch.WriteRune(ch)
@@ -626,7 +1162,7 @@ func (p *Pane) renderLiveScreenUnlocked(cols, rows int) string {
 }
 
 // buildANSI constructs ANSI escape sequence for given colors/mode
-func buildANSI(fg, bg vt10x.Color, mode int16, isCursor bool) string {
+func buildANSI(fg, bg vt10x.Color, mode int16) string {
 	var parts []string
 
 	// Foreground

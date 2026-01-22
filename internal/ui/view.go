@@ -1446,8 +1446,18 @@ func (m *Model) renderAgentView() string {
 		Foreground(m.colors.muted).
 		Render(fmt.Sprintf("[%d/%d]", paneIndex, activePaneCount))
 
+	// Scroll indicator when viewport is scrolled back
+	scrollIndicator := ""
+	if offset := pane.ViewportOffset(); offset > 0 {
+		scrollbackLen := pane.ScrollbackLen()
+		scrollStyle := lipgloss.NewStyle().
+			Foreground(m.colors.warning).
+			Bold(true)
+		scrollIndicator = scrollStyle.Render(fmt.Sprintf("↑%d/%d", offset, scrollbackLen)) + "  "
+	}
+
 	keyStyle := lipgloss.NewStyle().Foreground(m.colors.info)
-	hints := paneIndicator + "  " +
+	hints := scrollIndicator + paneIndicator + "  " +
 		keyStyle.Render("Ctrl+g") + m.dimStyle().Render(" Board")
 
 	spacing := m.width - lipgloss.Width(header) - lipgloss.Width(hints)

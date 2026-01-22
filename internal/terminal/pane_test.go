@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -87,5 +88,102 @@ func TestDetectMouseModeChanges(t *testing.T) {
 				t.Errorf("mouseEnabled = %v, want %v", p.mouseEnabled, tt.wantEnabled)
 			}
 		})
+	}
+}
+
+func TestDetectAltScreenChanges(t *testing.T) {
+	tests := []struct {
+		name         string
+		data         []byte
+		initialState bool
+		expectedState bool
+	}{
+		{
+			name:         "Enable alt screen 1049h",
+			data:         []byte("\x1b[?1049h"),
+			initialState: false,
+			expectedState: true,
+		},
+		{
+			name:         "Enable alt screen 47h",
+			data:         []byte("\x1b[?47h"),
+			initialState: false,
+			expectedState: true,
+		},
+		{
+			name:         "Disable alt screen 1049l",
+			data:         []byte("\x1b[?1049l"),
+			initialState: true,
+			expectedState: false,
+		},
+		{
+			name:         "Disable alt screen 47l",
+			data:         []byte("\x1b[?47l"),
+			initialState: true,
+			expectedState: false,
+		},
+		{
+			name:         "Sequence embedded in other data",
+			data:         []byte("Hello\x1b[?1049hWorld"),
+			initialState: false,
+			expectedState: true,
+		},
+		{
+			name:         "No alt screen sequence - state unchanged",
+			data:         []byte("Hello World"),
+			initialState: false,
+			expectedState: false,
+		},
+		{
+			name:         "No alt screen sequence - enabled stays enabled",
+			data:         []byte("Hello World"),
+			initialState: true,
+			expectedState: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pane := New("test", 80, 24, 1000)
+			pane.altScreenActive = tc.initialState
+			pane.detectAltScreenChanges(tc.data)
+			if pane.altScreenActive != tc.expectedState {
+				t.Errorf("expected altScreenActive=%v, got %v", tc.expectedState, pane.altScreenActive)
+			}
+		})
+	}
+}
+
+func TestViewportScrolling(t *testing.T) {
+	pane := New("test", 80, 24, 100)
+	pane.scrollback = NewScrollbackBuffer(100)
+
+	// Add some lines to scrollback
+	for i := 0; i < 50; i++ {
+		pane.scrollback.Push(makeTestLine(fmt.Sprintf("line%d", i)))
+	}
+
+	// Test scrollUp
+	pane.scrollUp(10)
+	if pane.viewportOffset != 10 {
+		t.Errorf("after scrollUp(10), expected offset=10, got %d", pane.viewportOffset)
+	}
+
+	// Test scrollUp beyond max
+	pane.scrollUp(100)
+	if pane.viewportOffset != 50 {
+		t.Errorf("scrollUp beyond max should cap at scrollback length, got %d", pane.viewportOffset)
+	}
+
+	// Test scrollDown
+	pane.scrollDown(20)
+	if pane.viewportOffset != 30 {
+		t.Errorf("after scrollDown(20), expected offset=30, got %d", pane.viewportOffset)
+	}
+
+	// Test scrollDown to 0
+	pane.scrollDown(100)
+	if pane.viewportOffset != 0 {
+		t.Errorf("scrollDown beyond 0 should cap at 0, got %d", pane.viewportOffset)
 	}
 }

@@ -206,6 +206,7 @@ type UIConfig struct {
 	ColumnWidth     int          `json:"column_width"`
 	TicketHeight    int          `json:"ticket_height"`
 	SidebarVisible  bool         `json:"sidebar_visible"`
+	ScrollbackLines int          `json:"scrollback_lines"`
 }
 
 // CleanupSettings controls cleanup behavior when deleting tickets
@@ -283,6 +284,7 @@ func DefaultConfig() *Config {
 			ColumnWidth:     40,
 			TicketHeight:    4,
 			SidebarVisible:  true,
+			ScrollbackLines: 10000,
 		},
 		Cleanup: CleanupSettings{
 			DeleteWorktree:       true,
