@@ -184,11 +184,6 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 
-		// Create virtual terminal with current dimensions
-		p.vt = vt10x.New(vt10x.WithSize(p.width, p.height))
-		p.scrollback = NewScrollbackBuffer(p.scrollbackSize)
-		p.selection = NewSelectionState()
-
 		// Build command
 		p.cmd = exec.Command(command, args...)
 		p.cmd.Env = buildCleanEnv(p.sessionName)
@@ -198,7 +193,7 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 			p.cmd.Dir = p.workdir
 		}
 
-		// Start PTY
+		// Start PTY first so we can use it as vt10x writer
 		ptmx, err := pty.Start(p.cmd)
 		if err != nil {
 			p.exitErr = err
@@ -213,6 +208,12 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 			Rows: uint16(p.height),
 			Cols: uint16(p.width),
 		})
+
+		// Create virtual terminal with PTY as writer for escape sequence responses
+		// This allows the terminal emulator to respond to queries like cursor position (DSR)
+		p.vt = vt10x.New(vt10x.WithSize(p.width, p.height), vt10x.WithWriter(p.pty))
+		p.scrollback = NewScrollbackBuffer(p.scrollbackSize)
+		p.selection = NewSelectionState()
 
 		// Start read loop
 		return p.readOutputUnlocked()()
