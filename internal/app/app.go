@@ -87,13 +87,8 @@ func CreateProject(cfg *config.Config, name, repoPath string) error {
 	}
 
 	p := project.NewProject(name, repoPath)
-
-	if cfg.Defaults.DefaultAgent != "" {
-		p.Settings.DefaultAgent = cfg.Defaults.DefaultAgent
-	}
-	if cfg.Defaults.BranchPrefix != "" {
-		p.Settings.BranchPrefix = cfg.Defaults.BranchPrefix
-	}
+	// Project settings only store explicit user overrides.
+	// Empty values cascade to global config defaults at runtime.
 
 	if err := registry.Add(p); err != nil {
 		return fmt.Errorf("failed to save project: %w", err)

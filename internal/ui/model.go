@@ -1438,12 +1438,8 @@ func (m *Model) createProjectFromPath() (tea.Model, tea.Cmd) {
 	name := filepath.Base(absPath)
 
 	newProject := project.NewProject(name, absPath)
-	if m.config.Defaults.DefaultAgent != "" {
-		newProject.Settings.DefaultAgent = m.config.Defaults.DefaultAgent
-	}
-	if m.config.Defaults.BranchPrefix != "" {
-		newProject.Settings.BranchPrefix = m.config.Defaults.BranchPrefix
-	}
+	// Project settings only store explicit user overrides.
+	// Empty values cascade to global config via getDefaultAgent() and GetBranchPrefix().
 
 	if err := m.projectRegistry.Add(newProject); err != nil {
 		m.notify("Failed to save: " + err.Error())
@@ -2425,11 +2421,11 @@ func (m *Model) setupMainRepoBranch(ticket *board.Ticket) error {
 }
 
 func (m *Model) generateBranchNameFromTitle(title string, proj *project.Project) string {
-	maxLen := proj.GetSlugMaxLength()
+	maxLen := m.getSlugMaxLength(proj)
 	slug := board.Slugify(title, maxLen)
 
-	template := proj.GetBranchTemplate()
-	prefix := proj.GetBranchPrefix()
+	template := m.getBranchTemplate(proj)
+	prefix := m.getBranchPrefix(proj)
 
 	result := strings.ReplaceAll(template, "{prefix}", prefix)
 	result = strings.ReplaceAll(result, "{slug}", slug)
@@ -2552,10 +2548,10 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 
 		generatedBranch := branchName
 		if generatedBranch == "" {
-			maxLen := proj.GetSlugMaxLength()
+			maxLen := m.getSlugMaxLength(proj)
 			slug := board.Slugify(ticket.Title, maxLen)
-			template := proj.GetBranchTemplate()
-			prefix := proj.GetBranchPrefix()
+			template := m.getBranchTemplate(proj)
+			prefix := m.getBranchPrefix(proj)
 			generatedBranch = strings.ReplaceAll(template, "{prefix}", prefix)
 			generatedBranch = strings.ReplaceAll(generatedBranch, "{slug}", slug)
 		}
@@ -2873,6 +2869,36 @@ func (m *Model) getDefaultAgent() string {
 		return m.selectedProject.Settings.DefaultAgent
 	}
 	return m.config.Defaults.DefaultAgent
+}
+
+func (m *Model) getBranchPrefix(proj *project.Project) string {
+	if proj != nil && proj.Settings.BranchPrefix != "" {
+		return proj.Settings.BranchPrefix
+	}
+	if m.config.Defaults.BranchPrefix != "" {
+		return m.config.Defaults.BranchPrefix
+	}
+	return "task/"
+}
+
+func (m *Model) getBranchTemplate(proj *project.Project) string {
+	if proj != nil && proj.Settings.BranchTemplate != "" {
+		return proj.Settings.BranchTemplate
+	}
+	if m.config.Defaults.BranchTemplate != "" {
+		return m.config.Defaults.BranchTemplate
+	}
+	return "{prefix}{slug}"
+}
+
+func (m *Model) getSlugMaxLength(proj *project.Project) int {
+	if proj != nil && proj.Settings.SlugMaxLength > 0 {
+		return proj.Settings.SlugMaxLength
+	}
+	if m.config.Defaults.SlugMaxLength > 0 {
+		return m.config.Defaults.SlugMaxLength
+	}
+	return 40
 }
 
 func (m *Model) getAgentIndex(agentName string) int {

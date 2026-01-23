@@ -49,10 +49,8 @@ func NewProject(name, repoPath string) *Project {
 		Settings: ProjectSettings{
 			AutoSpawnAgent:   true,
 			AutoCreateBranch: true,
-			BranchPrefix:     "task/",
-			BranchNaming:     "template",
-			BranchTemplate:   "{prefix}{slug}",
-			SlugMaxLength:    40,
+			// String/int settings left empty to cascade to global config.
+			// Use Model.getBranchPrefix(), getBranchTemplate(), getSlugMaxLength() for resolution.
 		},
 	}
 }
