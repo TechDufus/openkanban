@@ -148,10 +148,10 @@ OpenKanban uses a multi-file JSON storage approach:
 ```
 ~/.config/openkanban/
 ├── config.json           # Global configuration
-└── projects.json         # Project registry (all registered projects)
-
-{repo}/.openkanban/
-└── tickets.json          # Tickets for this specific project
+├── projects.json         # Project registry (all registered projects)
+└── tickets/
+    ├── {project_id}.json     # Tickets for each registered project
+    └── archived/             # Archived tickets when projects removed
 ```
 
 ### Project Registry Format
@@ -184,7 +184,7 @@ Stored in `~/.config/openkanban/projects.json`:
 
 ### Per-Project Tickets Format
 
-Stored in `{repo}/.openkanban/tickets.json`:
+Stored in `~/.config/openkanban/tickets/{project_id}.json`:
 
 ```json
 {
@@ -498,7 +498,8 @@ type OpencodeSettings struct {
 |---------|------|-------|
 | Global config | `~/.config/openkanban/config.json` | User preferences |
 | Project registry | `~/.config/openkanban/projects.json` | All registered projects |
-| Project tickets | `{repo}/.openkanban/tickets.json` | Per-project ticket storage |
+| Project tickets | `~/.config/openkanban/tickets/{project_id}.json` | Per-project ticket storage |
+| Archived tickets | `~/.config/openkanban/tickets/archived/` | Tickets from removed projects |
 | Worktrees | `{repo}-worktrees/` | Default sibling to repo |
 | Status cache | `~/.cache/openkanban-status/` | Agent status files |
 

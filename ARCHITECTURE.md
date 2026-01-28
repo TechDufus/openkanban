@@ -29,7 +29,7 @@ OpenKanban is a TUI application built with Go and Bubbletea that orchestrates AI
 │                     System Layer                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │  Filesystem  │  │     Git      │  │  PTY/vt10x   │          │
-│  │ (.openkanban)│  │  (worktrees) │  │ (terminals)  │          │
+│  │(~/.config/ok)│  │  (worktrees) │  │ (terminals)  │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -134,7 +134,7 @@ type ProjectRegistry struct {
 }
 
 // TicketStore holds tickets for a single project
-// Stored in {repo}/.openkanban/tickets.json
+// Stored in ~/.config/openkanban/tickets/{project_id}.json
 type TicketStore struct {
     ProjectID string
     Tickets   map[board.TicketID]*board.Ticket

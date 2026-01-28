@@ -2,15 +2,26 @@ package project
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/techdufus/openkanban/internal/board"
+	"github.com/techdufus/openkanban/internal/config"
 )
 
-const ticketsDir = ".openkanban"
+// ticketsDir returns the directory for ticket storage.
+// Falls back to current working directory on ConfigDir error.
+func ticketsDir() string {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		dir = "."
+	}
+	return filepath.Join(dir, "tickets")
+}
 const ticketsFile = "tickets.json"
 
 type TicketStore struct {
@@ -33,8 +44,30 @@ func NewTicketStore(projectID, repoPath string) *TicketStore {
 func LoadTicketStore(project *Project) (*TicketStore, error) {
 	store := NewTicketStore(project.ID, project.RepoPath)
 
-	path := store.filePath()
-	data, err := os.ReadFile(path)
+	// Check for migration from old location
+	oldPath := filepath.Join(project.RepoPath, ".openkanban", "tickets.json")
+	newPath := store.filePath()
+
+	// Ensure tickets directory exists
+	if err := os.MkdirAll(ticketsDir(), 0755); err != nil {
+		return nil, err
+	}
+
+	// Migration: if old exists and new doesn't, migrate
+	if _, err := os.Stat(oldPath); err == nil {
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			// Old exists, new doesn't - migrate
+			data, readErr := os.ReadFile(oldPath)
+			if readErr == nil {
+				if writeErr := os.WriteFile(newPath, data, 0644); writeErr == nil {
+					log.Printf("Migrated tickets from %s to %s. You can safely delete the old .openkanban directory.", oldPath, newPath)
+				}
+			}
+		}
+	}
+
+	// Load from new location
+	data, err := os.ReadFile(newPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return store, nil
@@ -55,11 +88,11 @@ func LoadTicketStore(project *Project) (*TicketStore, error) {
 }
 
 func (s *TicketStore) filePath() string {
-	return filepath.Join(s.repoPath, ticketsDir, ticketsFile)
+	return filepath.Join(ticketsDir(), s.ProjectID+".json")
 }
 
 func (s *TicketStore) Save() error {
-	dir := filepath.Join(s.repoPath, ticketsDir)
+	dir := ticketsDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -297,6 +330,26 @@ func (g *GlobalTicketStore) AddProject(p *Project) {
 func (g *GlobalTicketStore) RemoveProject(id string) error {
 	if _, ok := g.projects[id]; !ok {
 		return ErrProjectNotFound
+	}
+
+	// Archive ticket file before removing
+	srcPath := filepath.Join(ticketsDir(), id+".json")
+	if _, err := os.Stat(srcPath); err == nil {
+		archivedDir := filepath.Join(ticketsDir(), "archived")
+		if err := os.MkdirAll(archivedDir, 0755); err != nil {
+			return err
+		}
+
+		dstPath := filepath.Join(archivedDir, id+".json")
+		// If archived file already exists, append timestamp
+		if _, err := os.Stat(dstPath); err == nil {
+			dstPath = filepath.Join(archivedDir, fmt.Sprintf("%s_%d.json", id, time.Now().Unix()))
+		}
+
+		if err := os.Rename(srcPath, dstPath); err != nil {
+			return err
+		}
+		log.Printf("Archived tickets to %s", dstPath)
 	}
 
 	delete(g.projects, id)

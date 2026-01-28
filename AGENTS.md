@@ -172,7 +172,8 @@ func TestSomething_Integration(t *testing.T) {
 |------|------|--------|
 | Global config | `~/.config/openkanban/config.json` | JSON |
 | Project registry | `~/.config/openkanban/projects.json` | JSON |
-| Ticket store | `{repo}/.openkanban/tickets.json` | JSON per project |
+| Ticket store | `~/.config/openkanban/tickets/{project_id}.json` | JSON per project |
+| Archived tickets | `~/.config/openkanban/tickets/archived/` | Archived ticket JSON |
 
 ## Notes
 
