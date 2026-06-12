@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1431,14 +1432,22 @@ func (m *Model) renderAgentView() string {
 		}
 	}
 
-	activePaneCount := 0
-	paneIndex := 0
+	// Collect running pane IDs and sort for deterministic ordering
+	// (Go map iteration order is random, which causes flickering)
+	var runningPaneIDs []board.TicketID
 	for id, p := range m.panes {
 		if p.Running() {
-			activePaneCount++
-			if id == m.focusedPane {
-				paneIndex = activePaneCount
-			}
+			runningPaneIDs = append(runningPaneIDs, id)
+		}
+	}
+	slices.Sort(runningPaneIDs)
+
+	activePaneCount := len(runningPaneIDs)
+	paneIndex := 0
+	for i, id := range runningPaneIDs {
+		if id == m.focusedPane {
+			paneIndex = i + 1 // 1-based index
+			break
 		}
 	}
 
